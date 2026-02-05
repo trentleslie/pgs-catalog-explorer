@@ -6,7 +6,7 @@ import streamlit as st
 from datetime import timedelta
 
 BASE_URL = "https://www.pgscatalog.org/rest"
-CACHE_TTL = timedelta(hours=24)
+CACHE_TTL = timedelta(days=7)
 
 
 class PGSDataSource(ABC):
@@ -77,7 +77,7 @@ class APIDataSource(PGSDataSource):
             'User-Agent': 'PGS-Catalog-Explorer/1.0'
         })
     
-    def _fetch_paginated(self, endpoint: str, params: Optional[dict] = None) -> list:
+    def _fetch_paginated(self, endpoint: str, params: Optional[dict] = None, show_progress: bool = False) -> list:
         """Fetch all pages from a paginated endpoint following 'next' until null."""
         results = []
         url = f"{self.base_url}{endpoint}"
@@ -85,8 +85,20 @@ class APIDataSource(PGSDataSource):
             params = {}
         params['limit'] = 100
         
+        page = 0
+        progress_bar = None
+        status_text = None
+        
+        if show_progress:
+            status_text = st.empty()
+            progress_bar = st.progress(0)
+        
         while url:
             try:
+                page += 1
+                if show_progress and status_text:
+                    status_text.text(f"Loading page {page}... ({len(results)} items loaded)")
+                
                 response = self.session.get(url, params=params, timeout=60)
                 
                 if response.status_code == 500:
@@ -99,6 +111,11 @@ class APIDataSource(PGSDataSource):
                     results.extend(data['results'])
                     url = data.get('next')
                     params = {}
+                    
+                    if show_progress and progress_bar:
+                        total_count = data.get('count', len(results))
+                        if total_count > 0:
+                            progress_bar.progress(min(len(results) / total_count, 1.0))
                 else:
                     results = data if isinstance(data, list) else [data]
                     break
@@ -107,6 +124,12 @@ class APIDataSource(PGSDataSource):
                     break
                 st.error(f"API request failed: {e}")
                 break
+        
+        if show_progress:
+            if progress_bar:
+                progress_bar.empty()
+            if status_text:
+                status_text.empty()
         
         return results
     
@@ -121,7 +144,7 @@ class APIDataSource(PGSDataSource):
             st.error(f"API request failed: {e}")
             return {}
     
-    @st.cache_data(ttl=CACHE_TTL, show_spinner="Loading scores from PGS Catalog...")
+    @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
     def get_scores(_self, filters: Optional[dict] = None) -> pd.DataFrame:
         """Get all scores with optional filtering."""
         params = {}
@@ -129,7 +152,7 @@ class APIDataSource(PGSDataSource):
             if filters.get('pgs_ids'):
                 params['filter_ids'] = ','.join(filters['pgs_ids'])
         
-        scores = _self._fetch_paginated('/score/all', params)
+        scores = _self._fetch_paginated('/score/all', params, show_progress=True)
         
         if not scores:
             return pd.DataFrame()
@@ -362,7 +385,7 @@ class APIDataSource(PGSDataSource):
         
         return pd.DataFrame(rows)
     
-    @st.cache_data(ttl=CACHE_TTL, show_spinner="Loading evaluation summary (this may take a moment)...")
+    @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
     def get_evaluation_summary(_self) -> pd.DataFrame:
         """Get summary of evaluations per score (count and ancestry coverage).
         
@@ -374,26 +397,7 @@ class APIDataSource(PGSDataSource):
         - n_ancestry_groups: Number of unique ancestry groups evaluated
         - ancestry_groups: Semicolon-separated list of ancestry groups
         """
-        results = []
-        url = f"{_self.base_url}/performance/all"
-        params = {'limit': 100}
-        
-        while url:
-            try:
-                response = _self.session.get(url, params=params, timeout=60)
-                if response.status_code == 500:
-                    break
-                response.raise_for_status()
-                data = response.json()
-                
-                if isinstance(data, dict) and 'results' in data:
-                    results.extend(data['results'])
-                    url = data.get('next')
-                    params = {}
-                else:
-                    break
-            except Exception:
-                break
+        results = _self._fetch_paginated('/performance/all', show_progress=True)
         
         if not results:
             return pd.DataFrame()

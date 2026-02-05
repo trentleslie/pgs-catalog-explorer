@@ -59,8 +59,9 @@ PGS Catalog REST API
 ### API Configuration
 - Base URL: `https://www.pgscatalog.org/rest/`
 - Rate limit: 100 queries/minute
-- Pagination: Max 250 results per page, capped at 20 pages for evaluation summary
-- Cache TTL: 24 hours
+- Pagination: 100 results per page, follows 'next' until null (loads all ~5,200 scores)
+- Cache TTL: 7 days
+- Progress indicator: Shows loading progress with page count and items loaded
 
 ### Method Classification
 High (LD-aware): PRS-CS, PRS-CSx, LDpred, LDpred2, lassosum, SBayesR, MegaPRS
