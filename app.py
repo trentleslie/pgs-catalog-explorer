@@ -44,7 +44,7 @@ st.markdown("""
 data_source = get_data_source()
 
 
-@st.cache_data(ttl=86400, show_spinner="Loading enriched scores data...")
+@st.cache_data(ttl=86400, show_spinner=False)
 def get_enriched_scores():
     """Get scores dataframe enriched with method classification and quality tiers."""
     scores_df = data_source.get_scores()
@@ -58,12 +58,57 @@ def get_enriched_scores():
     return scores_df, eval_summary_df
 
 
+def load_data_with_progress():
+    """Load data with progress display, only showing progress on cache miss."""
+    progress_container = st.container()
+    
+    with progress_container:
+        scores_status = st.empty()
+        scores_progress = st.progress(0)
+        eval_status = st.empty() 
+        eval_progress = st.progress(0)
+    
+    def make_scores_callback():
+        def callback(page, total_pages, loaded, total, complete=False):
+            if complete:
+                scores_progress.progress(1.0)
+                scores_status.markdown(f"**Loading scores...** ✓ Complete · {loaded:,} items")
+            elif total_pages:
+                scores_status.markdown(f"**Loading scores...**\n\nPage {page} of {total_pages} · {loaded:,} of {total:,} items")
+                scores_progress.progress(min(loaded / total if total else 0, 1.0))
+            else:
+                scores_status.markdown(f"**Loading scores...**\n\nPage {page} · {loaded:,} items")
+        return callback
+    
+    def make_eval_callback():
+        def callback(page, total_pages, loaded, total, complete=False):
+            if complete:
+                eval_progress.progress(1.0)
+                eval_status.markdown(f"**Loading evaluations...** ✓ Complete · {loaded:,} items")
+            elif total_pages:
+                eval_status.markdown(f"**Loading evaluations...**\n\nPage {page} of {total_pages} · {loaded:,} of {total:,} items")
+                eval_progress.progress(min(loaded / total if total else 0, 1.0))
+            else:
+                eval_status.markdown(f"**Loading evaluations...**\n\nPage {page} · {loaded:,} items")
+        return callback
+    
+    data_source._scores_progress_callback = make_scores_callback()
+    data_source._eval_progress_callback = make_eval_callback()
+    
+    scores_df, eval_summary_df = get_enriched_scores()
+    
+    import time
+    time.sleep(0.5)
+    progress_container.empty()
+    
+    return scores_df, eval_summary_df
+
+
 def main():
     st.markdown('<p class="main-header">PGS Catalog Explorer</p>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Browse and explore polygenic scores, traits, and publications from the PGS Catalog</p>', unsafe_allow_html=True)
     
-    with st.spinner("Loading data from PGS Catalog (this may take a few minutes on first load)..."):
-        scores_df, eval_summary_df = get_enriched_scores()
+    scores_df, eval_summary_df = load_data_with_progress()
     
     if scores_df.empty:
         st.warning("No scores loaded. Please check your internet connection.")

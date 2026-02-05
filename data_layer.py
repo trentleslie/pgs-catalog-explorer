@@ -77,7 +77,7 @@ class APIDataSource(PGSDataSource):
             'User-Agent': 'PGS-Catalog-Explorer/1.0'
         })
     
-    def _fetch_paginated(self, endpoint: str, params: Optional[dict] = None) -> list:
+    def _fetch_paginated(self, endpoint: str, params: Optional[dict] = None, progress_callback=None) -> list:
         """Fetch all pages from a paginated endpoint following 'next' until null."""
         import time
         
@@ -88,6 +88,8 @@ class APIDataSource(PGSDataSource):
         params['limit'] = 100
         
         page = 0
+        total_count = None
+        total_pages = None
         
         while url:
             try:
@@ -95,6 +97,9 @@ class APIDataSource(PGSDataSource):
                 
                 if page > 1:
                     time.sleep(0.6)
+                
+                if progress_callback:
+                    progress_callback(page, total_pages, len(results), total_count)
                 
                 response = self.session.get(url, params=params, timeout=60)
                 
@@ -108,6 +113,11 @@ class APIDataSource(PGSDataSource):
                     results.extend(data['results'])
                     url = data.get('next')
                     params = {}
+                    
+                    if total_count is None:
+                        total_count = data.get('count', 0)
+                        if total_count > 0:
+                            total_pages = (total_count + 99) // 100
                 else:
                     results = data if isinstance(data, list) else [data]
                     break
@@ -115,6 +125,9 @@ class APIDataSource(PGSDataSource):
                 if results:
                     break
                 break
+        
+        if progress_callback:
+            progress_callback(page, total_pages, len(results), total_count, complete=True)
         
         return results
     
@@ -137,7 +150,8 @@ class APIDataSource(PGSDataSource):
             if filters.get('pgs_ids'):
                 params['filter_ids'] = ','.join(filters['pgs_ids'])
         
-        scores = _self._fetch_paginated('/score/all', params)
+        callback = getattr(_self, '_scores_progress_callback', None)
+        scores = _self._fetch_paginated('/score/all', params, progress_callback=callback)
         
         if not scores:
             return pd.DataFrame()
@@ -382,7 +396,8 @@ class APIDataSource(PGSDataSource):
         - n_ancestry_groups: Number of unique ancestry groups evaluated
         - ancestry_groups: Semicolon-separated list of ancestry groups
         """
-        results = _self._fetch_paginated('/performance/all')
+        callback = getattr(_self, '_eval_progress_callback', None)
+        results = _self._fetch_paginated('/performance/all', progress_callback=callback)
         
         if not results:
             return pd.DataFrame()
