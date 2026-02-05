@@ -74,7 +74,6 @@ def load_data_with_smart_cache():
         }
     
     status_container = st.empty()
-    progress_text = st.empty()
     
     status_container.markdown("**Checking PGS Catalog for updates...**")
     api_scores, api_evals = data_source.get_api_counts()
@@ -106,16 +105,10 @@ def load_data_with_smart_cache():
         get_enriched_scores_cached.clear()
         data_source.get_scores.clear()
         data_source.get_evaluation_summary.clear()
+    elif cached_scores == 0:
+        status_container.markdown("**Loading PGS Catalog data...** This may take a few minutes on first load.")
     
-    def progress_callback(current_page, total_pages, loaded_items, total_items, complete=False):
-        if complete:
-            progress_text.markdown(f"**Loading...** ✓ Complete · {loaded_items:,} items")
-        elif total_pages:
-            progress_text.markdown(f"**Loading...** Page {current_page} of {total_pages} · {loaded_items:,} of {total_items:,} items")
-        else:
-            progress_text.markdown(f"**Loading...** Page {current_page} · {loaded_items:,} items")
-    
-    data_source._progress_callback = progress_callback
+    data_source._progress_callback = None
     
     scores_df, eval_summary_df, load_timestamp = get_enriched_scores_cached()
     
@@ -131,7 +124,6 @@ def load_data_with_smart_cache():
         }
     
     status_container.empty()
-    progress_text.empty()
     return scores_df, eval_summary_df
 
 
