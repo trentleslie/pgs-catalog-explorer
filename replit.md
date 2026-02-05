@@ -65,6 +65,15 @@ PGS Catalog REST API
 - Pagination: 100 results per page, follows 'next' until null (loads all ~5,200 scores)
 - Cache TTL: 30 days with smart validation
 - Progress indicator: Shows loading status message during initial load and cache refresh
+- Timeout: 30s per request with retry on timeout
+
+### API Retry Logic
+- HTTP 5xx errors (server errors): Retry up to 3 times with exponential backoff (2s, 4s, 8s delays)
+- HTTP 4xx errors (client errors): No retry, returns partial data
+- Timeout errors: Retry with same backoff policy
+- Incomplete data detection: Compares fetched count vs API-reported total count
+- Sidebar shows warning when data is incomplete: "Scores: X / Y (API error during load)"
+- "Retry Full Load" button clears cache and re-fetches all data
 
 ### Smart Caching System
 - On each page load, pings API with `limit=1` to get current counts (fast, minimal data transfer)
