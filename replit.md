@@ -63,7 +63,7 @@ PGS Catalog REST API
 - Rate limit: 100 queries/minute
 - Pagination: 100 results per page, follows 'next' until null (loads all ~5,200 scores)
 - Cache TTL: 30 days with smart validation
-- Progress indicator: Shows "Page X of Y · X of Y items" during actual API fetches
+- Progress indicator: Shows loading status message during initial load and cache refresh
 
 ### Smart Caching System
 - On each page load, pings API with `limit=1` to get current counts (fast, minimal data transfer)
