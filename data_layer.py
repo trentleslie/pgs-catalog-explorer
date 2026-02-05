@@ -77,7 +77,7 @@ class APIDataSource(PGSDataSource):
             'User-Agent': 'PGS-Catalog-Explorer/1.0'
         })
     
-    def _fetch_paginated(self, endpoint: str, params: Optional[dict] = None, show_progress: bool = False) -> list:
+    def _fetch_paginated(self, endpoint: str, params: Optional[dict] = None, show_progress: bool = False, progress_label: str = "data") -> list:
         """Fetch all pages from a paginated endpoint following 'next' until null."""
         results = []
         url = f"{self.base_url}{endpoint}"
@@ -100,7 +100,7 @@ class APIDataSource(PGSDataSource):
             try:
                 page += 1
                 if show_progress and status_text:
-                    status_text.markdown(f"**Loading data from PGS Catalog...**  \n\nPage {page} · {len(results):,} items loaded")
+                    status_text.markdown(f"**Loading {progress_label}...**  \n\nPage {page} · {len(results):,} items loaded")
                 
                 response = self.session.get(url, params=params, timeout=60)
                 
@@ -129,6 +129,12 @@ class APIDataSource(PGSDataSource):
                 break
         
         if show_progress and status_container:
+            if progress_bar:
+                progress_bar.progress(1.0)
+            if status_text:
+                status_text.markdown(f"**Loading {progress_label}...**  \n\n✓ Complete · {len(results):,} items loaded")
+            import time
+            time.sleep(0.3)
             status_container.empty()
         
         return results
@@ -152,7 +158,7 @@ class APIDataSource(PGSDataSource):
             if filters.get('pgs_ids'):
                 params['filter_ids'] = ','.join(filters['pgs_ids'])
         
-        scores = _self._fetch_paginated('/score/all', params, show_progress=True)
+        scores = _self._fetch_paginated('/score/all', params, show_progress=True, progress_label="scores from PGS Catalog")
         
         if not scores:
             return pd.DataFrame()
@@ -397,7 +403,7 @@ class APIDataSource(PGSDataSource):
         - n_ancestry_groups: Number of unique ancestry groups evaluated
         - ancestry_groups: Semicolon-separated list of ancestry groups
         """
-        results = _self._fetch_paginated('/performance/all', show_progress=True)
+        results = _self._fetch_paginated('/performance/all', show_progress=True, progress_label="evaluation data from PGS Catalog")
         
         if not results:
             return pd.DataFrame()
