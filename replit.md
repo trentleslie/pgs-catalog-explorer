@@ -38,7 +38,8 @@ A Streamlit web application for exploring the Polygenic Score (PGS) Catalog data
 - Preset filter buttons: ARK-Ready, Kraken-Ready, All High-Quality
 - Ontology mapping filter: EFO only, MONDO only, HP only, Multiple, No mapping
 - Quality tier filtering and distribution visualization in all tabs
-- Kraken Ingest Estimator panel with ontology breakdown and graph impact estimates
+- Variant Count Distribution section with summary stats and histogram (log/linear toggle)
+- Kraken Ingest Estimator with tiered gene estimates based on actual variant counts
 - Clickable DOI links for publications
 - Sidebar with quality tier info, method classification, and ancestry categories
 
@@ -103,12 +104,21 @@ https://ftp.ebi.ac.uk/pub/databases/spot/pgs/metadata/
 streamlit run app.py --server.port 5000
 ```
 
+### Gene Edge Heuristics (Kraken Estimator)
+Tiered gene estimate based on variant count per score:
+- **Low variant scores (<1,000)**: ~50 genes per PRS
+- **Medium variant scores (1,000–100,000)**: ~200 genes per PRS
+- **High variant scores (>100,000)**: ~500 genes per PRS
+
+This accounts for many variants mapping to the same genes in high-variant scores.
+
 ## User Preferences
 - Scientific interface with proper ancestry context for metrics
 - FTP links for scoring files (not direct serving)
 - CSV export with key columns
 - Method classification distinguishing LD-aware from simpler approaches
 - Quality tier system for score assessment (ARK/Kraken readiness)
-- Kraken ingest estimation for graph database planning
+- Kraken ingest estimation for graph database planning with tiered gene estimates
+- Variant count distribution analysis with log-scale histograms
 - Ontology mapping breakdown (EFO/MONDO/HP) to assess cross-mapping needs
 - Clickable DOI links for publication references
