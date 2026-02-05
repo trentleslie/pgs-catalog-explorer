@@ -62,7 +62,7 @@ def main():
     st.markdown('<p class="main-header">PGS Catalog Explorer</p>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Browse and explore polygenic scores, traits, and publications from the PGS Catalog</p>', unsafe_allow_html=True)
     
-    tab1, tab2, tab3, tab4 = st.tabs(["Scores", "Traits", "Publications", "Performance Metrics"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Scores", "Traits", "Publications", "Performance Metrics", "Supplemental Info"])
     
     with tab1:
         render_scores_tab()
@@ -75,6 +75,9 @@ def main():
     
     with tab4:
         render_performance_tab()
+    
+    with tab5:
+        render_supplemental_tab()
     
     with st.sidebar:
         render_sidebar_info()
@@ -753,6 +756,36 @@ def render_sidebar_info():
                 for cat in categories[:10]:
                     if isinstance(cat, dict):
                         st.write(f"**{cat.get('symbol', '')}**: {cat.get('display_category', cat.get('label', ''))}")
+
+
+def render_supplemental_tab():
+    """Render supplemental information tab with PDF document."""
+    st.header("Supplemental Information")
+    
+    pdf_path = "prs-quality-assessment-framework.pdf"
+    
+    import os
+    if os.path.exists(pdf_path):
+        st.markdown("### PRS Quality Assessment Framework")
+        st.markdown("This document describes the quality assessment framework used for evaluating polygenic risk scores.")
+        
+        with open(pdf_path, "rb") as pdf_file:
+            pdf_bytes = pdf_file.read()
+        
+        st.download_button(
+            label="📥 Download PDF",
+            data=pdf_bytes,
+            file_name="prs-quality-assessment-framework.pdf",
+            mime="application/pdf"
+        )
+        
+        import base64
+        base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
+        pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="800" type="application/pdf"></iframe>'
+        st.markdown(pdf_display, unsafe_allow_html=True)
+    else:
+        st.warning("PDF document not found. Please ensure 'prs-quality-assessment-framework.pdf' is in the project directory.")
+        st.info("To add the document, upload a PDF file named 'prs-quality-assessment-framework.pdf' to the project root.")
 
 
 if __name__ == "__main__":
