@@ -62,7 +62,8 @@ def main():
     st.markdown('<p class="main-header">PGS Catalog Explorer</p>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Browse and explore polygenic scores, traits, and publications from the PGS Catalog</p>', unsafe_allow_html=True)
     
-    scores_df, eval_summary_df = get_enriched_scores()
+    with st.spinner("Loading data from PGS Catalog (this may take a few minutes on first load)..."):
+        scores_df, eval_summary_df = get_enriched_scores()
     
     if scores_df.empty:
         st.warning("No scores loaded. Please check your internet connection.")

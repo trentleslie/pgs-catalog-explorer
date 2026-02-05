@@ -77,8 +77,10 @@ class APIDataSource(PGSDataSource):
             'User-Agent': 'PGS-Catalog-Explorer/1.0'
         })
     
-    def _fetch_paginated(self, endpoint: str, params: Optional[dict] = None, show_progress: bool = False, progress_label: str = "data") -> list:
+    def _fetch_paginated(self, endpoint: str, params: Optional[dict] = None) -> list:
         """Fetch all pages from a paginated endpoint following 'next' until null."""
+        import time
+        
         results = []
         url = f"{self.base_url}{endpoint}"
         if params is None:
@@ -86,26 +88,13 @@ class APIDataSource(PGSDataSource):
         params['limit'] = 100
         
         page = 0
-        progress_bar = None
-        status_text = None
-        status_container = None
-        total_count = None
-        total_pages = None
-        
-        if show_progress:
-            status_container = st.container()
-            with status_container:
-                status_text = st.empty()
-                progress_bar = st.progress(0)
         
         while url:
             try:
                 page += 1
-                if show_progress and status_text:
-                    if total_pages:
-                        status_text.markdown(f"**Loading {progress_label}...**  \n\nPage {page} of {total_pages} · {len(results):,} of {total_count:,} items")
-                    else:
-                        status_text.markdown(f"**Loading {progress_label}...**  \n\nPage {page} · {len(results):,} items loaded")
+                
+                if page > 1:
+                    time.sleep(0.6)
                 
                 response = self.session.get(url, params=params, timeout=60)
                 
@@ -119,31 +108,13 @@ class APIDataSource(PGSDataSource):
                     results.extend(data['results'])
                     url = data.get('next')
                     params = {}
-                    
-                    if total_count is None:
-                        total_count = data.get('count', 0)
-                        if total_count > 0:
-                            total_pages = (total_count + 99) // 100
-                    
-                    if show_progress and progress_bar and total_count:
-                        progress_bar.progress(min(len(results) / total_count, 1.0))
                 else:
                     results = data if isinstance(data, list) else [data]
                     break
             except requests.RequestException as e:
                 if results:
                     break
-                st.error(f"API request failed: {e}")
                 break
-        
-        if show_progress and status_container:
-            if progress_bar:
-                progress_bar.progress(1.0)
-            if status_text:
-                status_text.markdown(f"**Loading {progress_label}...**  \n\n✓ Complete · {len(results):,} items loaded")
-            import time
-            time.sleep(0.3)
-            status_container.empty()
         
         return results
     
@@ -166,7 +137,7 @@ class APIDataSource(PGSDataSource):
             if filters.get('pgs_ids'):
                 params['filter_ids'] = ','.join(filters['pgs_ids'])
         
-        scores = _self._fetch_paginated('/score/all', params, show_progress=True, progress_label="scores from PGS Catalog")
+        scores = _self._fetch_paginated('/score/all', params)
         
         if not scores:
             return pd.DataFrame()
@@ -411,7 +382,7 @@ class APIDataSource(PGSDataSource):
         - n_ancestry_groups: Number of unique ancestry groups evaluated
         - ancestry_groups: Semicolon-separated list of ancestry groups
         """
-        results = _self._fetch_paginated('/performance/all', show_progress=True, progress_label="evaluation data from PGS Catalog")
+        results = _self._fetch_paginated('/performance/all')
         
         if not results:
             return pd.DataFrame()
