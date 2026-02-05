@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 BASE_URL = "https://www.pgscatalog.org/rest"
 CACHE_TTL = timedelta(days=30)
 FORCE_REFRESH_DAYS = 30
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 
 
 class PGSDataSource(ABC):
@@ -106,27 +106,36 @@ class APIDataSource(PGSDataSource):
                 response = self.session.get(url, params=params, timeout=60)
                 
                 if response.status_code == 500:
+                    print(f"[PAGINATION] Page {page}: HTTP 500 error, stopping")
                     break
                 
                 response.raise_for_status()
                 data = response.json()
                 
                 if isinstance(data, dict) and 'results' in data:
+                    page_results = len(data['results'])
                     results.extend(data['results'])
-                    url = data.get('next')
+                    next_url = data.get('next')
+                    print(f"[PAGINATION] Page {page}: fetched {page_results} results (total so far: {len(results)}), next={next_url is not None}")
+                    url = next_url
                     params = {}
                     
                     if total_count is None:
                         total_count = data.get('count', 0)
                         if total_count > 0:
                             total_pages = (total_count + 99) // 100
+                        print(f"[PAGINATION] API reports total count: {total_count}, expected pages: {total_pages}")
                 else:
                     results = data if isinstance(data, list) else [data]
+                    print(f"[PAGINATION] Page {page}: non-paginated response, {len(results)} results")
                     break
             except requests.RequestException as e:
+                print(f"[PAGINATION] Page {page}: Request error: {e}")
                 if results:
                     break
                 break
+        
+        print(f"[PAGINATION] Complete: {page} pages fetched, {len(results)} total results (expected: {total_count})")
         
         if progress_callback:
             progress_callback(page, total_pages, len(results), total_count, complete=True)
@@ -404,9 +413,10 @@ class APIDataSource(PGSDataSource):
         for metric in metrics:
             pub = metric.get('publication', {})
             
-            effect_sizes = metric.get('effect_sizes', [])
-            class_acc = metric.get('class_acc', [])
-            other_metrics = metric.get('othermetrics', [])
+            pm = metric.get('performance_metrics', {})
+            effect_sizes = pm.get('effect_sizes', [])
+            class_acc = pm.get('class_acc', [])
+            other_metrics = pm.get('othermetrics', [])
             all_raw = effect_sizes + class_acc + other_metrics
             
             all_metrics = []

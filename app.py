@@ -270,8 +270,8 @@ def render_scores_tab(scores_df, eval_summary_df):
             silver_count = len(filtered_df[filtered_df['quality_tier'] == 'Silver']) if 'quality_tier' in filtered_df.columns else 0
             st.metric("Silver Tier", silver_count)
         with metric_cols[3]:
-            kraken_stats = compute_kraken_stats(filtered_df)
-            st.metric("Kraken-Eligible", kraken_stats['kraken_eligible'])
+            bronze_count = len(filtered_df[filtered_df['quality_tier'] == 'Bronze']) if 'quality_tier' in filtered_df.columns else 0
+            st.metric("Bronze Tier", bronze_count)
         
         if not filtered_df.empty:
             download_col1, download_col2 = st.columns(2)
@@ -594,8 +594,132 @@ def render_traits_tab(scores_df):
             st.plotly_chart(fig, use_container_width=True)
 
 
+def render_pgs_publications(pgs_id: str, scores_df):
+    """Show development and all external evaluation publications for a PGS ID."""
+    st.subheader(f"Publications for {pgs_id}")
+    
+    score_info = scores_df[scores_df['pgs_id'] == pgs_id] if not scores_df.empty else pd.DataFrame()
+    
+    if score_info.empty:
+        st.warning(f"Score {pgs_id} not found in loaded data.")
+        return
+    
+    dev_pgp = score_info.iloc[0].get('pgp_id', '')
+    dev_author = score_info.iloc[0].get('first_author', '')
+    dev_date = score_info.iloc[0].get('publication_date', '')
+    quality_tier = score_info.iloc[0].get('quality_tier', 'Unknown')
+    trait_name = score_info.iloc[0].get('trait_names', 'Unknown trait')
+    
+    tier_emoji = {'Gold': '🥇', 'Silver': '🥈', 'Bronze': '🥉', 'Unrated': '⚫', 'Unknown': '❓'}
+    
+    info_cols = st.columns(3)
+    with info_cols[0]:
+        st.metric("Score", pgs_id)
+    with info_cols[1]:
+        st.metric("Quality Tier", f"{tier_emoji.get(quality_tier, '')} {quality_tier}")
+    with info_cols[2]:
+        st.metric("Trait", trait_name[:30] + "..." if len(trait_name) > 30 else trait_name)
+    
+    with st.spinner(f"Fetching all evaluations for {pgs_id}..."):
+        metrics_df = data_source.get_performance_metrics(pgs_id)
+    
+    publications = []
+    
+    if dev_pgp:
+        publications.append({
+            'pgp_id': dev_pgp,
+            'source_type': 'Development',
+            'first_author': dev_author,
+            'publication_date': dev_date,
+            'n_evaluations': 0,
+            'best_auc': None,
+            'ancestries': ''
+        })
+    
+    if not metrics_df.empty:
+        eval_pubs = metrics_df.groupby('pgp_id').agg({
+            'first_author': 'first',
+            'publication_date': 'first',
+            'ppm_id': 'count',
+            'auc': lambda x: x.dropna().max() if x.notna().any() else None,
+            'ancestry': lambda x: '; '.join(sorted(set(a for anc in x.dropna() for a in anc.split('; ') if a)))
+        }).reset_index()
+        
+        eval_pubs.columns = ['pgp_id', 'first_author', 'publication_date', 'n_evaluations', 'best_auc', 'ancestries']
+        
+        for _, row in eval_pubs.iterrows():
+            is_dev = row['pgp_id'] == dev_pgp
+            if is_dev:
+                for pub in publications:
+                    if pub['pgp_id'] == dev_pgp:
+                        pub['n_evaluations'] = row['n_evaluations']
+                        pub['best_auc'] = row['best_auc']
+                        pub['ancestries'] = row['ancestries']
+                        pub['source_type'] = 'Development + Evaluation'
+            else:
+                publications.append({
+                    'pgp_id': row['pgp_id'],
+                    'source_type': 'External Evaluation',
+                    'first_author': row['first_author'],
+                    'publication_date': row['publication_date'],
+                    'n_evaluations': row['n_evaluations'],
+                    'best_auc': row['best_auc'],
+                    'ancestries': row['ancestries']
+                })
+    
+    if not publications:
+        st.warning(f"No publication data found for {pgs_id}")
+        return
+    
+    pub_df = pd.DataFrame(publications)
+    
+    source_emoji = {'Development': '📝', 'External Evaluation': '🔬', 'Development + Evaluation': '📝🔬'}
+    pub_df['source'] = pub_df['source_type'].apply(lambda x: f"{source_emoji.get(x, '')} {x}")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        dev_count = len(pub_df[pub_df['source_type'].str.contains('Development')])
+        st.metric("Development Publications", dev_count)
+    with col2:
+        eval_count = len(pub_df[pub_df['source_type'] == 'External Evaluation'])
+        st.metric("External Evaluation Publications", eval_count)
+    
+    display_df = pub_df.copy()
+    display_df['best_auc'] = display_df['best_auc'].apply(lambda x: f"{x:.3f}" if pd.notna(x) else '-')
+    
+    st.dataframe(
+        display_df[['pgp_id', 'source', 'first_author', 'publication_date', 'n_evaluations', 'best_auc', 'ancestries']],
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            'pgp_id': st.column_config.TextColumn("Publication ID"),
+            'source': st.column_config.TextColumn("Source Type"),
+            'first_author': st.column_config.TextColumn("First Author"),
+            'publication_date': st.column_config.TextColumn("Date"),
+            'n_evaluations': st.column_config.NumberColumn("# Evaluations"),
+            'best_auc': st.column_config.TextColumn("Best AUC"),
+            'ancestries': st.column_config.TextColumn("Ancestry Coverage")
+        }
+    )
+
+
 def render_publications_tab(scores_df):
     st.header("Publications Browser")
+    
+    pgs_search = st.text_input(
+        "Search by PGS ID",
+        placeholder="e.g., PGS000013 - shows development + all evaluation publications",
+        key="pub_pgs_search"
+    )
+    
+    if pgs_search:
+        pgs_id = pgs_search.upper().strip()
+        if not pgs_id.startswith("PGS"):
+            pgs_id = f"PGS{pgs_id.zfill(6)}"
+        
+        render_pgs_publications(pgs_id, scores_df)
+        st.divider()
+        st.subheader("Browse All Publications")
     
     publications_df = data_source.get_publications()
     
@@ -807,10 +931,10 @@ def render_sidebar_info(eval_summary_df):
     last_checked = cache_meta.get('last_checked')
     is_fresh = cache_meta.get('is_fresh', True)
     
-    if scores_count > 0:
+    if scores_loaded > 0 or scores_count > 0:
         col1, col2 = st.columns(2)
         with col1:
-            st.metric("Scores", f"{scores_count:,}")
+            st.metric("Scores Loaded", f"{scores_loaded:,}" if scores_loaded > 0 else f"{scores_count:,}")
         with col2:
             st.metric("Evaluations", f"{evals_count:,}")
         
