@@ -772,17 +772,29 @@ def render_supplemental_tab():
         with open(pdf_path, "rb") as pdf_file:
             pdf_bytes = pdf_file.read()
         
-        st.download_button(
-            label="📥 Download PDF",
-            data=pdf_bytes,
-            file_name="prs-quality-assessment-framework.pdf",
-            mime="application/pdf"
-        )
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            st.download_button(
+                label="📥 Download PDF",
+                data=pdf_bytes,
+                file_name="prs-quality-assessment-framework.pdf",
+                mime="application/pdf"
+            )
         
-        import base64
-        base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
-        pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="800" type="application/pdf"></iframe>'
-        st.markdown(pdf_display, unsafe_allow_html=True)
+        st.info("Click the download button above to view the full PDF document.")
+        
+        st.divider()
+        st.markdown("#### Document Summary")
+        st.markdown("""
+        The PRS Quality Assessment Framework provides guidelines for evaluating polygenic risk scores based on:
+        
+        - **Method Quality**: Classification of scoring methods (LD-aware vs C+T approaches)
+        - **Validation Evidence**: Number and quality of independent evaluations
+        - **Ancestry Coverage**: Representation across diverse population groups
+        - **Ontology Mapping**: Integration with standard trait ontologies (EFO, MONDO, HP)
+        
+        These criteria inform the Gold/Silver/Bronze/Unrated tier classification used throughout this application.
+        """)
     else:
         st.warning("PDF document not found. Please ensure 'prs-quality-assessment-framework.pdf' is in the project directory.")
         st.info("To add the document, upload a PDF file named 'prs-quality-assessment-framework.pdf' to the project root.")
