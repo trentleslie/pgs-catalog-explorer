@@ -62,35 +62,35 @@ def main():
     st.markdown('<p class="main-header">PGS Catalog Explorer</p>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Browse and explore polygenic scores, traits, and publications from the PGS Catalog</p>', unsafe_allow_html=True)
     
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Scores", "Traits", "Publications", "Performance Metrics", "Supplemental Info"])
-    
-    with tab1:
-        render_scores_tab()
-    
-    with tab2:
-        render_traits_tab()
-    
-    with tab3:
-        render_publications_tab()
-    
-    with tab4:
-        render_performance_tab()
-    
-    with tab5:
-        render_supplemental_tab()
-    
-    with st.sidebar:
-        render_sidebar_info()
-
-
-def render_scores_tab():
-    st.header("Polygenic Scores Browser")
-    
     scores_df, eval_summary_df = get_enriched_scores()
     
     if scores_df.empty:
         st.warning("No scores loaded. Please check your internet connection.")
         return
+    
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Scores", "Traits", "Publications", "Performance Metrics", "Supplemental Info"])
+    
+    with tab1:
+        render_scores_tab(scores_df, eval_summary_df)
+    
+    with tab2:
+        render_traits_tab(scores_df)
+    
+    with tab3:
+        render_publications_tab(scores_df)
+    
+    with tab4:
+        render_performance_tab(scores_df)
+    
+    with tab5:
+        render_supplemental_tab()
+    
+    with st.sidebar:
+        render_sidebar_info(eval_summary_df)
+
+
+def render_scores_tab(scores_df, eval_summary_df):
+    st.header("Polygenic Scores Browser")
     
     if not eval_summary_df.empty:
         eval_coverage = len(eval_summary_df)
@@ -426,12 +426,11 @@ def render_score_details(pgs_id: str, scores_df: pd.DataFrame):
     st.write(f"- **Evaluation:** {score_row.get('eval_ancestry', 'N/A')}")
 
 
-def render_traits_tab():
+def render_traits_tab(scores_df):
     st.header("Traits Browser")
     
     traits_df = data_source.get_traits()
     categories_df = data_source.get_trait_categories()
-    scores_df, _ = get_enriched_scores()
     
     if traits_df.empty:
         st.warning("No traits loaded. Please check your internet connection.")
@@ -527,11 +526,10 @@ def render_traits_tab():
             st.plotly_chart(fig, use_container_width=True)
 
 
-def render_publications_tab():
+def render_publications_tab(scores_df):
     st.header("Publications Browser")
     
     publications_df = data_source.get_publications()
-    scores_df, _ = get_enriched_scores()
     
     if publications_df.empty:
         st.warning("No publications loaded. Please check your internet connection.")
@@ -633,17 +631,11 @@ def render_publications_tab():
             )
 
 
-def render_performance_tab():
+def render_performance_tab(scores_df):
     st.header("Performance Metrics")
     
     st.info("Performance metrics show how well a PGS predicts the trait in different populations. "
             "Context matters: ancestry and sample size significantly affect metric interpretation.")
-    
-    scores_df, _ = get_enriched_scores()
-    
-    if scores_df.empty:
-        st.warning("Load scores first to search for performance metrics.")
-        return
     
     pgs_id = st.text_input("Enter PGS ID to view performance metrics", placeholder="e.g., PGS000001")
     
@@ -705,7 +697,7 @@ def render_performance_tab():
         )
 
 
-def render_sidebar_info():
+def render_sidebar_info(eval_summary_df):
     st.header("About")
     st.markdown("""
     This app explores the [PGS Catalog](https://www.pgscatalog.org/), 
@@ -720,7 +712,7 @@ def render_sidebar_info():
     - Analyze performance metrics with ancestry context
     
     **Data Source:**  
-    PGS Catalog REST API (cached 24hrs)
+    PGS Catalog REST API (cached 7 days)
     
     **Links:**
     - [PGS Catalog](https://www.pgscatalog.org/)
@@ -763,8 +755,6 @@ def render_sidebar_info():
     
     st.header("Ancestry Coverage")
     st.caption("Scores with evaluations per ancestry group")
-    
-    _, eval_summary_df = get_enriched_scores()
     
     ancestry_counts = {}
     if not eval_summary_df.empty and 'ancestry_groups' in eval_summary_df.columns:

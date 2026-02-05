@@ -89,6 +89,8 @@ class APIDataSource(PGSDataSource):
         progress_bar = None
         status_text = None
         status_container = None
+        total_count = None
+        total_pages = None
         
         if show_progress:
             status_container = st.container()
@@ -100,7 +102,10 @@ class APIDataSource(PGSDataSource):
             try:
                 page += 1
                 if show_progress and status_text:
-                    status_text.markdown(f"**Loading {progress_label}...**  \n\nPage {page} · {len(results):,} items loaded")
+                    if total_pages:
+                        status_text.markdown(f"**Loading {progress_label}...**  \n\nPage {page} of {total_pages} · {len(results):,} of {total_count:,} items")
+                    else:
+                        status_text.markdown(f"**Loading {progress_label}...**  \n\nPage {page} · {len(results):,} items loaded")
                 
                 response = self.session.get(url, params=params, timeout=60)
                 
@@ -115,10 +120,13 @@ class APIDataSource(PGSDataSource):
                     url = data.get('next')
                     params = {}
                     
-                    if show_progress and progress_bar:
-                        total_count = data.get('count', len(results))
+                    if total_count is None:
+                        total_count = data.get('count', 0)
                         if total_count > 0:
-                            progress_bar.progress(min(len(results) / total_count, 1.0))
+                            total_pages = (total_count + 99) // 100
+                    
+                    if show_progress and progress_bar and total_count:
+                        progress_bar.progress(min(len(results) / total_count, 1.0))
                 else:
                     results = data if isinstance(data, list) else [data]
                     break
