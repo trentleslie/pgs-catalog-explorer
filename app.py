@@ -297,10 +297,6 @@ def render_kraken_estimator(df: pd.DataFrame):
 - Avg variants/score: **{stats['avg_variants']:,}**
 - Max variants: **{stats['max_variants']:,}**
 """)
-    
-    if stats['total_variants'] > 1000000:
-        estimated_variant_edges = stats['total_variants']
-        st.warning(f"If we stored all variants: ~{estimated_variant_edges:,} edges (this is why we aggregate to genes instead)")
 
 
 def render_score_details(pgs_id: str, scores_df: pd.DataFrame):
