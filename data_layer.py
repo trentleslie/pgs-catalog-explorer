@@ -57,7 +57,7 @@ class PGSDataSource(ABC):
         pass
     
     @abstractmethod
-    def get_evaluation_summary(self, max_pages: int = 20) -> pd.DataFrame:
+    def get_evaluation_summary(self) -> pd.DataFrame:
         """Get summary of evaluations per score (count and ancestry coverage)."""
         pass
 
@@ -78,17 +78,14 @@ class APIDataSource(PGSDataSource):
         })
     
     def _fetch_paginated(self, endpoint: str, params: Optional[dict] = None) -> list:
-        """Fetch all pages from a paginated endpoint."""
+        """Fetch all pages from a paginated endpoint following 'next' until null."""
         results = []
         url = f"{self.base_url}{endpoint}"
         if params is None:
             params = {}
-        params['limit'] = 250
+        params['limit'] = 100
         
-        max_pages = 100
-        page_count = 0
-        
-        while url and page_count < max_pages:
+        while url:
             try:
                 response = self.session.get(url, params=params, timeout=60)
                 
@@ -102,7 +99,6 @@ class APIDataSource(PGSDataSource):
                     results.extend(data['results'])
                     url = data.get('next')
                     params = {}
-                    page_count += 1
                 else:
                     results = data if isinstance(data, list) else [data]
                     break
@@ -367,11 +363,10 @@ class APIDataSource(PGSDataSource):
         return pd.DataFrame(rows)
     
     @st.cache_data(ttl=CACHE_TTL, show_spinner="Loading evaluation summary (this may take a moment)...")
-    def get_evaluation_summary(_self, max_pages: int = 20) -> pd.DataFrame:
+    def get_evaluation_summary(_self) -> pd.DataFrame:
         """Get summary of evaluations per score (count and ancestry coverage).
         
-        Args:
-            max_pages: Maximum pages to fetch (default 20, ~5000 metrics)
+        Follows 'next' until null to get all evaluations.
         
         Returns a DataFrame with:
         - pgs_id: Score ID
@@ -381,10 +376,9 @@ class APIDataSource(PGSDataSource):
         """
         results = []
         url = f"{_self.base_url}/performance/all"
-        params = {'limit': 250}
-        page_count = 0
+        params = {'limit': 100}
         
-        while url and page_count < max_pages:
+        while url:
             try:
                 response = _self.session.get(url, params=params, timeout=60)
                 if response.status_code == 500:
@@ -396,7 +390,6 @@ class APIDataSource(PGSDataSource):
                     results.extend(data['results'])
                     url = data.get('next')
                     params = {}
-                    page_count += 1
                 else:
                     break
             except Exception:
