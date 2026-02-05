@@ -88,16 +88,19 @@ class APIDataSource(PGSDataSource):
         page = 0
         progress_bar = None
         status_text = None
+        status_container = None
         
         if show_progress:
-            status_text = st.empty()
-            progress_bar = st.progress(0)
+            status_container = st.container()
+            with status_container:
+                status_text = st.empty()
+                progress_bar = st.progress(0)
         
         while url:
             try:
                 page += 1
                 if show_progress and status_text:
-                    status_text.text(f"Loading page {page}... ({len(results)} items loaded)")
+                    status_text.markdown(f"**Loading data from PGS Catalog...**  \nPage {page} · {len(results):,} items loaded")
                 
                 response = self.session.get(url, params=params, timeout=60)
                 
@@ -125,11 +128,8 @@ class APIDataSource(PGSDataSource):
                 st.error(f"API request failed: {e}")
                 break
         
-        if show_progress:
-            if progress_bar:
-                progress_bar.empty()
-            if status_text:
-                status_text.empty()
+        if show_progress and status_container:
+            status_container.empty()
         
         return results
     
