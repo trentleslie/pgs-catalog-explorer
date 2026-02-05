@@ -58,57 +58,14 @@ def get_enriched_scores():
     return scores_df, eval_summary_df
 
 
-def load_data_with_progress():
-    """Load data with progress display, only showing progress on cache miss."""
-    progress_container = st.container()
-    
-    with progress_container:
-        scores_status = st.empty()
-        scores_progress = st.progress(0)
-        eval_status = st.empty() 
-        eval_progress = st.progress(0)
-    
-    def make_scores_callback():
-        def callback(page, total_pages, loaded, total, complete=False):
-            if complete:
-                scores_progress.progress(1.0)
-                scores_status.markdown(f"**Loading scores...** ✓ Complete · {loaded:,} items")
-            elif total_pages:
-                scores_status.markdown(f"**Loading scores...**\n\nPage {page} of {total_pages} · {loaded:,} of {total:,} items")
-                scores_progress.progress(min(loaded / total if total else 0, 1.0))
-            else:
-                scores_status.markdown(f"**Loading scores...**\n\nPage {page} · {loaded:,} items")
-        return callback
-    
-    def make_eval_callback():
-        def callback(page, total_pages, loaded, total, complete=False):
-            if complete:
-                eval_progress.progress(1.0)
-                eval_status.markdown(f"**Loading evaluations...** ✓ Complete · {loaded:,} items")
-            elif total_pages:
-                eval_status.markdown(f"**Loading evaluations...**\n\nPage {page} of {total_pages} · {loaded:,} of {total:,} items")
-                eval_progress.progress(min(loaded / total if total else 0, 1.0))
-            else:
-                eval_status.markdown(f"**Loading evaluations...**\n\nPage {page} · {loaded:,} items")
-        return callback
-    
-    data_source._scores_progress_callback = make_scores_callback()
-    data_source._eval_progress_callback = make_eval_callback()
-    
-    scores_df, eval_summary_df = get_enriched_scores()
-    
-    import time
-    time.sleep(0.5)
-    progress_container.empty()
-    
-    return scores_df, eval_summary_df
 
 
 def main():
     st.markdown('<p class="main-header">PGS Catalog Explorer</p>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Browse and explore polygenic scores, traits, and publications from the PGS Catalog</p>', unsafe_allow_html=True)
     
-    scores_df, eval_summary_df = load_data_with_progress()
+    with st.spinner("Loading data from PGS Catalog (this may take a few minutes on first load)..."):
+        scores_df, eval_summary_df = get_enriched_scores()
     
     if scores_df.empty:
         st.warning("No scores loaded. Please check your internet connection.")
@@ -722,16 +679,48 @@ def render_performance_tab(scores_df):
                 st.plotly_chart(fig, use_container_width=True)
         
         st.subheader("Evaluation Details")
-        st.write("Each row shows ancestry, sample size, and metrics for proper context.")
+        st.write("Each row shows ancestry, sample size, and individual metrics for proper context.")
         
-        display_cols = ['ppm_id', 'ancestry', 'sample_size', 'cohorts', 'metrics', 
-                       'phenotyping_reported', 'first_author', 'publication_date']
+        has_auc = metrics_df['auc'].notna().any() if 'auc' in metrics_df.columns else False
+        has_r2 = metrics_df['r2'].notna().any() if 'r2' in metrics_df.columns else False
+        has_or = metrics_df['or_val'].notna().any() if 'or_val' in metrics_df.columns else False
+        has_hr = metrics_df['hr'].notna().any() if 'hr' in metrics_df.columns else False
+        has_beta = metrics_df['beta'].notna().any() if 'beta' in metrics_df.columns else False
+        
+        display_cols = ['ppm_id', 'ancestry', 'sample_size']
+        if has_auc:
+            display_cols.extend(['auc', 'auc_ci'])
+        if has_r2:
+            display_cols.extend(['r2', 'r2_ci'])
+        if has_or:
+            display_cols.extend(['or_val', 'or_ci'])
+        if has_hr:
+            display_cols.extend(['hr', 'hr_ci'])
+        if has_beta:
+            display_cols.extend(['beta', 'beta_ci'])
+        display_cols.extend(['cohorts', 'phenotyping_reported', 'first_author', 'publication_date'])
+        
         available_display = [c for c in display_cols if c in metrics_df.columns]
+        
+        column_config = {
+            'auc': st.column_config.NumberColumn("AUC", format="%.3f"),
+            'auc_ci': st.column_config.TextColumn("AUC CI"),
+            'r2': st.column_config.NumberColumn("R²", format="%.3f"),
+            'r2_ci': st.column_config.TextColumn("R² CI"),
+            'or_val': st.column_config.NumberColumn("OR", format="%.2f"),
+            'or_ci': st.column_config.TextColumn("OR CI"),
+            'hr': st.column_config.NumberColumn("HR", format="%.2f"),
+            'hr_ci': st.column_config.TextColumn("HR CI"),
+            'beta': st.column_config.NumberColumn("Beta", format="%.3f"),
+            'beta_ci': st.column_config.TextColumn("Beta CI"),
+            'sample_size': st.column_config.NumberColumn("Sample Size", format="%d"),
+        }
         
         st.dataframe(
             metrics_df[available_display],
             use_container_width=True,
-            hide_index=True
+            hide_index=True,
+            column_config=column_config
         )
         
         csv_data = metrics_df.to_csv(index=False)

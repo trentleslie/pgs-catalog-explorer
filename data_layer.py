@@ -150,8 +150,7 @@ class APIDataSource(PGSDataSource):
             if filters.get('pgs_ids'):
                 params['filter_ids'] = ','.join(filters['pgs_ids'])
         
-        callback = getattr(_self, '_scores_progress_callback', None)
-        scores = _self._fetch_paginated('/score/all', params, progress_callback=callback)
+        scores = _self._fetch_paginated('/score/all', params)
         
         if not scores:
             return pd.DataFrame()
@@ -323,7 +322,15 @@ class APIDataSource(PGSDataSource):
     
     @st.cache_data(ttl=CACHE_TTL, show_spinner="Loading performance metrics...")
     def get_performance_metrics(_self, pgs_id: Optional[str] = None) -> pd.DataFrame:
-        """Get performance metrics, optionally filtered by score ID."""
+        """Get performance metrics, optionally filtered by score ID.
+        
+        Returns DataFrame with individual metric columns:
+        - auc, auc_ci: Area Under ROC Curve with confidence interval
+        - r2, r2_ci: R-squared (variance explained)
+        - or_val, or_ci: Odds Ratio with confidence interval
+        - hr, hr_ci: Hazard Ratio with confidence interval
+        - beta, beta_ci: Beta coefficient with confidence interval
+        """
         if pgs_id:
             params = {'pgs_id': pgs_id}
             metrics = _self._fetch_paginated('/performance/search', params)
@@ -333,6 +340,36 @@ class APIDataSource(PGSDataSource):
         if not metrics:
             return pd.DataFrame()
         
+        def extract_metric(metric_list, exact_names, partial_names=None):
+            """Extract a specific metric by name.
+            
+            Args:
+                metric_list: List of metric dicts to search
+                exact_names: List of exact name_short values to match (case-insensitive)
+                partial_names: Optional list of substrings for fallback matching
+            """
+            exact_lower = [n.lower() for n in exact_names]
+            for m in metric_list:
+                name_short = m.get('name_short', '').lower().strip()
+                if name_short in exact_lower:
+                    estimate = m.get('estimate')
+                    ci_lower = m.get('ci_lower')
+                    ci_upper = m.get('ci_upper')
+                    ci_str = f"[{ci_lower}-{ci_upper}]" if ci_lower and ci_upper else None
+                    return estimate, ci_str
+            
+            if partial_names:
+                partial_lower = [n.lower() for n in partial_names]
+                for m in metric_list:
+                    name_long = m.get('name_long', '').lower()
+                    if any(p in name_long for p in partial_lower):
+                        estimate = m.get('estimate')
+                        ci_lower = m.get('ci_lower')
+                        ci_upper = m.get('ci_upper')
+                        ci_str = f"[{ci_lower}-{ci_upper}]" if ci_lower and ci_upper else None
+                        return estimate, ci_str
+            return None, None
+        
         rows = []
         for metric in metrics:
             pub = metric.get('publication', {})
@@ -340,9 +377,10 @@ class APIDataSource(PGSDataSource):
             effect_sizes = metric.get('effect_sizes', [])
             class_acc = metric.get('class_acc', [])
             other_metrics = metric.get('othermetrics', [])
+            all_raw = effect_sizes + class_acc + other_metrics
             
             all_metrics = []
-            for m in effect_sizes + class_acc + other_metrics:
+            for m in all_raw:
                 name = m.get('name_short', m.get('name_long', ''))
                 estimate = m.get('estimate', '')
                 ci_lower = m.get('ci_lower', '')
@@ -352,6 +390,12 @@ class APIDataSource(PGSDataSource):
                         all_metrics.append(f"{name}: {estimate} [{ci_lower}-{ci_upper}]")
                     else:
                         all_metrics.append(f"{name}: {estimate}")
+            
+            auc, auc_ci = extract_metric(all_raw, ['auc', 'auroc', 'c-statistic', 'c-index'], ['area under'])
+            r2, r2_ci = extract_metric(all_raw, ['r²', 'r2'], ['r-squared', 'variance explained'])
+            or_val, or_ci = extract_metric(all_raw, ['or'], ['odds ratio'])
+            hr, hr_ci = extract_metric(all_raw, ['hr'], ['hazard ratio'])
+            beta, beta_ci = extract_metric(all_raw, ['beta', 'β'], None)
             
             samples = metric.get('sampleset', {}).get('samples', [])
             sample_size = 0
@@ -376,6 +420,16 @@ class APIDataSource(PGSDataSource):
                 'sample_size': sample_size,
                 'ancestry': '; '.join(set(ancestries)),
                 'cohorts': '; '.join(set(cohorts)),
+                'auc': auc,
+                'auc_ci': auc_ci,
+                'r2': r2,
+                'r2_ci': r2_ci,
+                'or_val': or_val,
+                'or_ci': or_ci,
+                'hr': hr,
+                'hr_ci': hr_ci,
+                'beta': beta,
+                'beta_ci': beta_ci,
                 'metrics': '; '.join(all_metrics),
                 'effect_sizes': effect_sizes,
                 'class_acc': class_acc,
@@ -396,8 +450,7 @@ class APIDataSource(PGSDataSource):
         - n_ancestry_groups: Number of unique ancestry groups evaluated
         - ancestry_groups: Semicolon-separated list of ancestry groups
         """
-        callback = getattr(_self, '_eval_progress_callback', None)
-        results = _self._fetch_paginated('/performance/all', progress_callback=callback)
+        results = _self._fetch_paginated('/performance/all')
         
         if not results:
             return pd.DataFrame()
