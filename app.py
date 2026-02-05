@@ -47,20 +47,24 @@ data_source = get_data_source()
 from datetime import datetime
 
 CACHE_TTL_SECONDS = 30 * 24 * 60 * 60
-CACHE_VERSION = 3
+CACHE_VERSION = 4
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def get_enriched_scores_cached(_version=CACHE_VERSION):
-    """Get scores dataframe enriched with method classification and quality tiers."""
-    scores_df = data_source.get_scores()
+    """Get scores dataframe enriched with method classification and quality tiers.
+    
+    Returns:
+        Tuple of (scores_df, eval_summary_df, timestamp, is_complete)
+    """
+    scores_df, is_complete = data_source.get_scores()
     eval_summary_df = data_source.get_evaluation_summary()
     
     if scores_df.empty:
-        return scores_df, eval_summary_df, datetime.now().isoformat()
+        return scores_df, eval_summary_df, datetime.now().isoformat(), is_complete
     
     scores_df = add_method_classification(scores_df)
     scores_df = add_quality_tiers(scores_df, eval_summary_df)
-    return scores_df, eval_summary_df, datetime.now().isoformat()
+    return scores_df, eval_summary_df, datetime.now().isoformat(), is_complete
 
 
 def load_data_with_smart_cache():
@@ -71,8 +75,17 @@ def load_data_with_smart_cache():
             'evals_count': 0,
             'last_checked': None,
             'last_loaded': None,
-            'is_fresh': None
+            'is_fresh': None,
+            'is_complete': True,
+            'expected_scores': 0
         }
+    
+    if st.session_state.get('force_refresh'):
+        get_enriched_scores_cached.clear()
+        data_source.get_scores.clear()
+        data_source.get_evaluation_summary.clear()
+        st.session_state.force_refresh = False
+        st.session_state.cache_metadata['scores_count'] = 0
     
     status_container = st.empty()
     
@@ -109,7 +122,7 @@ def load_data_with_smart_cache():
     elif cached_scores == 0:
         status_container.markdown("**Loading PGS Catalog data...** This may take a few minutes on first load.")
     
-    scores_df, eval_summary_df, load_timestamp = get_enriched_scores_cached()
+    scores_df, eval_summary_df, load_timestamp, is_complete = get_enriched_scores_cached()
     
     if not scores_df.empty:
         st.session_state.cache_metadata = {
@@ -119,7 +132,9 @@ def load_data_with_smart_cache():
             'evals_summary_count': len(eval_summary_df) if not eval_summary_df.empty else 0,
             'last_checked': datetime.now().isoformat(),
             'last_loaded': load_timestamp,
-            'is_fresh': not cache_stale
+            'is_fresh': not cache_stale,
+            'is_complete': is_complete,
+            'expected_scores': api_scores if api_scores > 0 else len(scores_df)
         }
     
     status_container.empty()
@@ -962,25 +977,35 @@ def render_sidebar_info(eval_summary_df):
     scores_count = cache_meta.get('scores_count', 0)
     evals_count = cache_meta.get('evals_count', 0)
     scores_loaded = cache_meta.get('scores_loaded', 0)
+    expected_scores = cache_meta.get('expected_scores', 0)
     last_checked = cache_meta.get('last_checked')
     is_fresh = cache_meta.get('is_fresh', True)
+    is_complete = cache_meta.get('is_complete', True)
     
     if scores_loaded > 0 or scores_count > 0:
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Scores Loaded", f"{scores_loaded:,}" if scores_loaded > 0 else f"{scores_count:,}")
-        with col2:
-            st.metric("Evaluations", f"{evals_count:,}")
-        
-        if last_checked:
-            try:
-                checked_dt = datetime.fromisoformat(last_checked)
-                st.caption(f"Last checked: {checked_dt.strftime('%b %d, %Y %H:%M')}")
-            except:
-                pass
-        
-        if is_fresh:
-            st.success("✓ Up to date with PGS Catalog", icon="✅")
+        if not is_complete and expected_scores > scores_loaded:
+            st.warning(f"⚠️ **Data Status: Incomplete**")
+            st.markdown(f"Scores: **{scores_loaded:,}** / {expected_scores:,}")
+            st.caption("API error during load - some scores missing")
+            if st.button("🔄 Retry Full Load", type="primary", use_container_width=True):
+                st.session_state.force_refresh = True
+                st.rerun()
+        else:
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Scores Loaded", f"{scores_loaded:,}" if scores_loaded > 0 else f"{scores_count:,}")
+            with col2:
+                st.metric("Evaluations", f"{evals_count:,}")
+            
+            if last_checked:
+                try:
+                    checked_dt = datetime.fromisoformat(last_checked)
+                    st.caption(f"Last checked: {checked_dt.strftime('%b %d, %Y %H:%M')}")
+                except:
+                    pass
+            
+            if is_fresh:
+                st.success("✓ Up to date with PGS Catalog", icon="✅")
     
     st.divider()
     

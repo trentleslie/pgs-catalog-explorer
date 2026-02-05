@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 BASE_URL = "https://www.pgscatalog.org/rest"
 CACHE_TTL = timedelta(days=30)
 FORCE_REFRESH_DAYS = 30
-CACHE_VERSION = 3
+CACHE_VERSION = 4
 
 
 class PGSDataSource(ABC):
@@ -79,8 +79,13 @@ class APIDataSource(PGSDataSource):
             'User-Agent': 'PGS-Catalog-Explorer/1.0'
         })
     
-    def _fetch_paginated(self, endpoint: str, params: Optional[dict] = None, progress_callback=None) -> list:
-        """Fetch all pages from a paginated endpoint following 'next' until null."""
+    def _fetch_paginated(self, endpoint: str, params: Optional[dict] = None, progress_callback=None) -> Tuple[list, bool]:
+        """Fetch all pages from a paginated endpoint following 'next' until null.
+        
+        Returns:
+            Tuple of (results list, is_complete bool)
+            is_complete is True if all expected results were fetched successfully
+        """
         import time
         
         results = []
@@ -92,24 +97,74 @@ class APIDataSource(PGSDataSource):
         page = 0
         total_count = None
         total_pages = None
+        is_complete = True
         
         while url:
-            try:
-                page += 1
-                
-                if page > 1:
-                    time.sleep(0.6)
-                
-                if progress_callback:
-                    progress_callback(page, total_pages, len(results), total_count)
-                
-                response = self.session.get(url, params=params, timeout=60)
-                
-                if response.status_code == 500:
-                    print(f"[PAGINATION] Page {page}: HTTP 500 error, stopping")
+            page += 1
+            
+            if page > 1:
+                time.sleep(0.6)
+            
+            if progress_callback:
+                progress_callback(page, total_pages, len(results), total_count)
+            
+            response = None
+            max_retries = 3
+            retry_delays = [2, 4, 8]
+            
+            for attempt in range(max_retries + 1):
+                try:
+                    response = self.session.get(url, params=params, timeout=30)
+                    
+                    if response.status_code >= 500:
+                        if attempt < max_retries:
+                            delay = retry_delays[attempt]
+                            print(f"[PAGINATION] Page {page}: HTTP {response.status_code} error, retry {attempt + 1}/{max_retries} in {delay}s")
+                            time.sleep(delay)
+                            continue
+                        else:
+                            print(f"[PAGINATION] Page {page}: HTTP {response.status_code} error after {max_retries} retries, stopping")
+                            is_complete = False
+                            url = None
+                            break
+                    
+                    if 400 <= response.status_code < 500:
+                        print(f"[PAGINATION] Page {page}: HTTP {response.status_code} client error (not retrying)")
+                        is_complete = False
+                        url = None
+                        break
+                    
+                    response.raise_for_status()
                     break
-                
-                response.raise_for_status()
+                    
+                except requests.Timeout:
+                    if attempt < max_retries:
+                        delay = retry_delays[attempt]
+                        print(f"[PAGINATION] Page {page}: Timeout, retry {attempt + 1}/{max_retries} in {delay}s")
+                        time.sleep(delay)
+                        continue
+                    else:
+                        print(f"[PAGINATION] Page {page}: Timeout after {max_retries} retries, stopping")
+                        is_complete = False
+                        url = None
+                        break
+                        
+                except requests.RequestException as e:
+                    if attempt < max_retries:
+                        delay = retry_delays[attempt]
+                        print(f"[PAGINATION] Page {page}: Request error ({e}), retry {attempt + 1}/{max_retries} in {delay}s")
+                        time.sleep(delay)
+                        continue
+                    else:
+                        print(f"[PAGINATION] Page {page}: Request error after {max_retries} retries: {e}")
+                        is_complete = False
+                        url = None
+                        break
+            
+            if response is None or url is None:
+                break
+            
+            try:
                 data = response.json()
                 
                 if isinstance(data, dict) and 'results' in data:
@@ -129,18 +184,21 @@ class APIDataSource(PGSDataSource):
                     results = data if isinstance(data, list) else [data]
                     print(f"[PAGINATION] Page {page}: non-paginated response, {len(results)} results")
                     break
-            except requests.RequestException as e:
-                print(f"[PAGINATION] Page {page}: Request error: {e}")
-                if results:
-                    break
+            except Exception as e:
+                print(f"[PAGINATION] Page {page}: JSON parse error: {e}")
+                is_complete = False
                 break
         
-        print(f"[PAGINATION] Complete: {page} pages fetched, {len(results)} total results (expected: {total_count})")
+        if total_count is not None and len(results) != total_count:
+            is_complete = False
+        
+        status = "Complete" if is_complete else "INCOMPLETE"
+        print(f"[PAGINATION] {status}: {page} pages fetched, {len(results)} total results (expected: {total_count})")
         
         if progress_callback:
             progress_callback(page, total_pages, len(results), total_count, complete=True)
         
-        return results
+        return results, is_complete
     
     def _fetch_single(self, endpoint: str) -> dict:
         """Fetch a single resource."""
@@ -182,17 +240,22 @@ class APIDataSource(PGSDataSource):
         return is_fresh, api_scores, api_evals
     
     @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
-    def get_scores(_self, filters: Optional[dict] = None, _version=CACHE_VERSION) -> pd.DataFrame:
-        """Get all scores with optional filtering."""
+    def get_scores(_self, filters: Optional[dict] = None, _version=CACHE_VERSION) -> Tuple[pd.DataFrame, bool]:
+        """Get all scores with optional filtering.
+        
+        Returns:
+            Tuple of (DataFrame, is_complete) where is_complete indicates
+            whether all expected results were fetched successfully.
+        """
         params = {}
         if filters:
             if filters.get('pgs_ids'):
                 params['filter_ids'] = ','.join(filters['pgs_ids'])
         
-        scores = _self._fetch_paginated('/score/all', params)
+        scores, is_complete = _self._fetch_paginated('/score/all', params)
         
         if not scores:
-            return pd.DataFrame()
+            return pd.DataFrame(), is_complete
         
         rows = []
         for score in scores:
@@ -260,7 +323,7 @@ class APIDataSource(PGSDataSource):
                 'date_release': score.get('date_release', ''),
             })
         
-        return pd.DataFrame(rows)
+        return pd.DataFrame(rows), is_complete
     
     def get_score_details(self, pgs_id: str) -> dict:
         """Get detailed information for a single score."""
@@ -269,7 +332,7 @@ class APIDataSource(PGSDataSource):
     @st.cache_data(ttl=CACHE_TTL, show_spinner="Loading traits...")
     def get_traits(_self) -> pd.DataFrame:
         """Get all traits."""
-        traits = _self._fetch_paginated('/trait/all')
+        traits, _ = _self._fetch_paginated('/trait/all')
         
         if not traits:
             return pd.DataFrame()
@@ -299,7 +362,7 @@ class APIDataSource(PGSDataSource):
     @st.cache_data(ttl=CACHE_TTL, show_spinner="Loading trait categories...")
     def get_trait_categories(_self) -> pd.DataFrame:
         """Get trait categories."""
-        categories = _self._fetch_paginated('/trait_category/all')
+        categories, _ = _self._fetch_paginated('/trait_category/all')
         
         if not categories:
             return pd.DataFrame()
@@ -327,7 +390,7 @@ class APIDataSource(PGSDataSource):
     @st.cache_data(ttl=CACHE_TTL, show_spinner="Loading publications...")
     def get_publications(_self) -> pd.DataFrame:
         """Get all publications."""
-        publications = _self._fetch_paginated('/publication/all')
+        publications, _ = _self._fetch_paginated('/publication/all')
         
         if not publications:
             return pd.DataFrame()
@@ -372,9 +435,9 @@ class APIDataSource(PGSDataSource):
         """
         if pgs_id:
             params = {'pgs_id': pgs_id}
-            metrics = _self._fetch_paginated('/performance/search', params)
+            metrics, _ = _self._fetch_paginated('/performance/search', params)
         else:
-            metrics = _self._fetch_paginated('/performance/all')
+            metrics, _ = _self._fetch_paginated('/performance/all')
         
         if not metrics:
             return pd.DataFrame()
@@ -490,7 +553,7 @@ class APIDataSource(PGSDataSource):
         - n_ancestry_groups: Number of unique ancestry groups evaluated
         - ancestry_groups: Semicolon-separated list of ancestry groups
         """
-        results = _self._fetch_paginated('/performance/all')
+        results, _ = _self._fetch_paginated('/performance/all')
         
         if not results:
             return pd.DataFrame()
