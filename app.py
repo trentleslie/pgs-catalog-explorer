@@ -749,13 +749,38 @@ def render_sidebar_info():
     
     ancestry_cats = data_source.get_ancestry_categories()
     if ancestry_cats:
-        st.header("Ancestry Categories")
+        st.header("Ancestry Coverage")
+        st.caption("Scores with evaluations per ancestry group")
+        
+        _, eval_summary_df = get_enriched_scores()
+        
+        ancestry_counts = {}
+        if not eval_summary_df.empty and 'ancestry_groups' in eval_summary_df.columns:
+            for groups in eval_summary_df['ancestry_groups'].dropna():
+                if groups:
+                    for ancestry in groups.split('; '):
+                        ancestry = ancestry.strip()
+                        if ancestry:
+                            key = ancestry.lower()
+                            ancestry_counts[key] = ancestry_counts.get(key, 0) + 1
+        
         if isinstance(ancestry_cats, dict):
             categories = ancestry_cats.get('categories', [])
             if categories:
+                displayed_any = False
                 for cat in categories[:10]:
                     if isinstance(cat, dict):
-                        st.write(f"**{cat.get('symbol', '')}**: {cat.get('display_category', cat.get('label', ''))}")
+                        symbol = cat.get('symbol', '')
+                        label = cat.get('display_category', cat.get('label', ''))
+                        count = ancestry_counts.get(label.lower(), ancestry_counts.get(symbol.lower(), 0))
+                        if count > 0:
+                            st.write(f"**{symbol}**: {label} ({count:,})")
+                            displayed_any = True
+                        else:
+                            st.write(f"**{symbol}**: {label}")
+                            displayed_any = True
+                if not displayed_any:
+                    st.caption("No ancestry data available")
 
 
 def render_supplemental_tab():
