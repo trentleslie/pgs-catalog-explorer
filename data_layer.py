@@ -329,6 +329,41 @@ class APIDataSource(PGSDataSource):
         """Get detailed information for a single score."""
         return self._fetch_single(f'/score/{pgs_id}')
     
+    def get_score_by_id(self, pgs_id: str) -> Optional[dict]:
+        """Fetch a single score directly from API and parse into structured dict.
+        
+        Returns None if score not found, otherwise returns dict with fields:
+        pgs_id, pgp_id, first_author, publication_date, trait_names, trait_efo,
+        method_name, n_variants, grch37_available, grch38_available
+        """
+        raw = self._fetch_single(f'/score/{pgs_id}')
+        if not raw or 'id' not in raw:
+            return None
+        
+        pub = raw.get('publication', {}) or {}
+        traits = raw.get('trait_efo', []) or []
+        trait_names = '; '.join(t.get('label', '') for t in traits if isinstance(t, dict))
+        trait_ids = '; '.join(t.get('id', '') for t in traits if isinstance(t, dict))
+        
+        ftp_grch37 = raw.get('ftp_harmonized_scoring_files', {}) or {}
+        ftp_grch38 = ftp_grch37
+        grch37 = bool(ftp_grch37.get('GRCh37', {}).get('positions'))
+        grch38 = bool(ftp_grch38.get('GRCh38', {}).get('positions'))
+        
+        return {
+            'pgs_id': raw.get('id', ''),
+            'pgp_id': pub.get('id', ''),
+            'first_author': pub.get('firstauthor', ''),
+            'publication_date': pub.get('date_publication', ''),
+            'doi': pub.get('doi', ''),
+            'trait_names': trait_names,
+            'trait_efo': trait_ids,
+            'method_name': raw.get('method_name', ''),
+            'n_variants': raw.get('variants_number', 0),
+            'grch37_available': grch37,
+            'grch38_available': grch38,
+        }
+    
     @st.cache_data(ttl=CACHE_TTL, show_spinner="Loading traits...")
     def get_traits(_self) -> pd.DataFrame:
         """Get all traits."""

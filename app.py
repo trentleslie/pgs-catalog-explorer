@@ -145,25 +145,32 @@ def main():
     st.markdown('<p class="main-header">PGS Catalog Explorer</p>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Browse and explore polygenic scores, traits, and publications from the PGS Catalog</p>', unsafe_allow_html=True)
     
-    scores_df, eval_summary_df = load_data_with_smart_cache()
-    
-    if scores_df.empty:
-        st.warning("No scores loaded. Please check your internet connection.")
-        return
-    
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["Scores", "Traits", "Publications", "Performance Metrics", "Supplemental Info"])
     
+    with tab3:
+        render_publications_tab_independent()
+    
+    scores_df, eval_summary_df = load_data_with_smart_cache()
+    
+    data_loaded = not scores_df.empty
+    
     with tab1:
-        render_scores_tab(scores_df, eval_summary_df)
+        if data_loaded:
+            render_scores_tab(scores_df, eval_summary_df)
+        else:
+            st.info("Scores data is loading. Please wait...")
     
     with tab2:
-        render_traits_tab(scores_df)
-    
-    with tab3:
-        render_publications_tab(scores_df)
+        if data_loaded:
+            render_traits_tab(scores_df)
+        else:
+            st.info("Traits data is loading. Please wait...")
     
     with tab4:
-        render_performance_tab(scores_df)
+        if data_loaded:
+            render_performance_tab(scores_df)
+        else:
+            st.info("Performance data is loading. Please wait...")
     
     with tab5:
         render_supplemental_tab()
@@ -609,57 +616,47 @@ def render_traits_tab(scores_df):
             st.plotly_chart(fig, use_container_width=True)
 
 
-def render_pgs_publications(pgs_id: str, scores_df):
-    """Show development and all external evaluation publications for a PGS ID."""
+def render_pgs_publications(pgs_id: str):
+    """Show development and all external evaluation publications for a PGS ID.
+    
+    Uses direct API calls - no dependency on cached scores data.
+    """
     st.subheader(f"Publications for {pgs_id}")
     
-    score_info = scores_df[scores_df['pgs_id'] == pgs_id] if not scores_df.empty else pd.DataFrame()
+    with st.spinner(f"Fetching {pgs_id} from API..."):
+        score_info = data_source.get_score_by_id(pgs_id)
     
-    if score_info.empty:
-        st.warning(f"Score {pgs_id} not found in loaded data.")
+    if not score_info:
+        st.warning(f"Score {pgs_id} not found in PGS Catalog.")
         return
     
-    dev_pgp = score_info.iloc[0].get('pgp_id', '')
-    dev_author = score_info.iloc[0].get('first_author', '')
-    dev_date = score_info.iloc[0].get('publication_date', '')
-    quality_tier = score_info.iloc[0].get('quality_tier', 'Unknown')
-    trait_name = score_info.iloc[0].get('trait_names', 'Unknown trait')
-    
-    tier_emoji = {'Gold': '🥇', 'Silver': '🥈', 'Bronze': '🥉', 'Unrated': '⚫', 'Unknown': '❓'}
+    dev_pgp = score_info.get('pgp_id', '')
+    dev_author = score_info.get('first_author', '')
+    dev_date = score_info.get('publication_date', '')
+    dev_doi = score_info.get('doi', '')
+    trait_name = score_info.get('trait_names', 'Unknown trait')
+    method_name = score_info.get('method_name', '')
     
     info_cols = st.columns(3)
     with info_cols[0]:
         st.metric("Score", pgs_id)
     with info_cols[1]:
-        st.metric("Quality Tier", f"{tier_emoji.get(quality_tier, '')} {quality_tier}")
+        st.metric("Method", method_name[:25] + "..." if len(method_name) > 25 else method_name if method_name else "Unknown")
     with info_cols[2]:
         st.metric("Trait", trait_name[:30] + "..." if len(trait_name) > 30 else trait_name)
     
-    all_pubs_df = data_source.get_publications()
-    pub_metadata = {}
-    if not all_pubs_df.empty:
-        for _, row in all_pubs_df.iterrows():
-            pub_metadata[row.get('pgp_id', '')] = {
-                'title': row.get('title', ''),
-                'journal': row.get('journal', ''),
-                'doi': row.get('doi', '')
-            }
-    
-    with st.spinner(f"Fetching all evaluations for {pgs_id}..."):
+    with st.spinner(f"Fetching evaluations for {pgs_id}..."):
         metrics_df = data_source.get_performance_metrics(pgs_id)
     
     publications = []
     
-    dev_meta = pub_metadata.get(dev_pgp, {})
     if dev_pgp:
         publications.append({
             'pgp_id': dev_pgp,
             'source_type': 'Development',
             'first_author': dev_author,
             'publication_date': dev_date,
-            'title': dev_meta.get('title', ''),
-            'journal': dev_meta.get('journal', ''),
-            'doi': dev_meta.get('doi', ''),
+            'doi': dev_doi,
             'n_evaluations': 0,
             'best_auc': None,
             'ancestries': ''
@@ -677,15 +674,17 @@ def render_pgs_publications(pgs_id: str, scores_df):
                 agg_dict['auc'] = lambda x: x.dropna().max() if x.notna().any() else None
             if 'ancestry' in metrics_df.columns:
                 agg_dict['ancestry'] = lambda x: '; '.join(sorted(set(a for anc in x.dropna() for a in str(anc).split('; ') if a)))
+            if 'doi' in metrics_df.columns:
+                agg_dict['doi'] = 'first'
             
             eval_pubs = metrics_df.groupby('pgp_id').agg(agg_dict).reset_index()
             
             for _, row in eval_pubs.iterrows():
                 pgp = row['pgp_id']
                 is_dev = pgp == dev_pgp
-                meta = pub_metadata.get(pgp, {})
                 best_auc = row.get('auc') if 'auc' in row else None
                 ancestries = row.get('ancestry', '') if 'ancestry' in row else ''
+                eval_doi = row.get('doi', '') if 'doi' in row else ''
                 
                 if is_dev:
                     for pub in publications:
@@ -700,9 +699,7 @@ def render_pgs_publications(pgs_id: str, scores_df):
                         'source_type': 'External Evaluation',
                         'first_author': row['first_author'],
                         'publication_date': row['publication_date'],
-                        'title': meta.get('title', ''),
-                        'journal': meta.get('journal', ''),
-                        'doi': meta.get('doi', ''),
+                        'doi': eval_doi,
                         'n_evaluations': row['ppm_id'],
                         'best_auc': best_auc,
                         'ancestries': ancestries
@@ -730,9 +727,8 @@ def render_pgs_publications(pgs_id: str, scores_df):
     
     display_df = pub_df.copy()
     display_df['best_auc'] = display_df['best_auc'].apply(lambda x: f"{x:.3f}" if pd.notna(x) else '-')
-    display_df['title_short'] = display_df['title'].apply(lambda x: x[:60] + "..." if len(str(x)) > 60 else x)
     
-    display_cols = ['pgp_id', 'source', 'first_author', 'title_short', 'doi_link', 'n_evaluations', 'best_auc', 'ancestries']
+    display_cols = ['pgp_id', 'source', 'first_author', 'doi_link', 'n_evaluations', 'best_auc', 'ancestries']
     available_cols = [c for c in display_cols if c in display_df.columns]
     
     st.dataframe(
@@ -743,7 +739,6 @@ def render_pgs_publications(pgs_id: str, scores_df):
             'pgp_id': st.column_config.TextColumn("PGP ID"),
             'source': st.column_config.TextColumn("Source Type"),
             'first_author': st.column_config.TextColumn("First Author"),
-            'title_short': st.column_config.TextColumn("Title"),
             'doi_link': st.column_config.LinkColumn("DOI", display_text="https://doi\\.org/(.+)"),
             'n_evaluations': st.column_config.NumberColumn("# Evals"),
             'best_auc': st.column_config.TextColumn("Best AUC"),
@@ -752,7 +747,12 @@ def render_pgs_publications(pgs_id: str, scores_df):
     )
 
 
-def render_publications_tab(scores_df):
+def render_publications_tab_independent():
+    """Publications tab that works independently of main data load.
+    
+    PGS ID search uses direct API calls, browse mode uses publications API.
+    No dependency on cached scores data for the search functionality.
+    """
     st.header("Publications Browser")
     
     pgs_search = st.text_input(
@@ -766,7 +766,111 @@ def render_publications_tab(scores_df):
         if not pgs_id.startswith("PGS"):
             pgs_id = f"PGS{pgs_id.zfill(6)}"
         
-        render_pgs_publications(pgs_id, scores_df)
+        render_pgs_publications(pgs_id)
+        st.divider()
+    
+    st.subheader("Browse All Publications")
+    st.info("The browse section shows publications from the PGS Catalog. For detailed score lookups, use the PGS ID search above.")
+    
+    with st.spinner("Loading publications..."):
+        publications_df = data_source.get_publications()
+    
+    if publications_df.empty:
+        st.warning("Publications are loading. This may take a moment...")
+        return
+    
+    col1, col2 = st.columns([1, 3])
+    
+    with col1:
+        st.write("**Filters**")
+        
+        search = st.text_input("Search publications", placeholder="PGP ID, author, title...", key="pub_browse_search")
+        
+        years = sorted(publications_df['date_publication'].str[:4].dropna().unique(), reverse=True)
+        year_options = ['All'] + list(years)
+        selected_year = st.selectbox("Publication Year", options=year_options, key="pub_browse_year")
+        
+        has_dev = st.checkbox("Has PGS development", key="pub_browse_dev")
+        has_eval = st.checkbox("Has PGS evaluation", key="pub_browse_eval")
+        
+        filtered_pubs = filter_publications(
+            publications_df,
+            search_query=search if search else None,
+            year=int(selected_year) if selected_year != 'All' else None,
+            has_development=has_dev,
+            has_evaluation=has_eval
+        )
+    
+    with col2:
+        st.metric("Publications Found", len(filtered_pubs))
+        
+        if not filtered_pubs.empty:
+            csv_data = export_publications_csv(filtered_pubs)
+            st.download_button(
+                label="Download Filtered Publications (CSV)",
+                data=csv_data,
+                file_name="pgs_catalog_publications.csv",
+                mime="text/csv",
+                key="pub_browse_download"
+            )
+            
+            pubs_by_year = publications_df.copy()
+            pubs_by_year['year'] = pubs_by_year['date_publication'].str[:4]
+            year_counts = pubs_by_year['year'].value_counts().sort_index()
+            
+            fig = px.bar(
+                x=year_counts.index,
+                y=year_counts.values,
+                title="Publications per Year",
+                labels={'x': 'Year', 'y': 'Number of Publications'}
+            )
+            fig.update_layout(height=300)
+            st.plotly_chart(fig, use_container_width=True, key="pub_browse_chart")
+            
+            display_df = filtered_pubs.head(100).copy()
+            
+            if 'doi' in display_df.columns:
+                display_df['doi_link'] = display_df.apply(
+                    lambda row: f"https://doi.org/{row['doi']}" if row.get('doi') else (row.get('url') or ''),
+                    axis=1
+                )
+            
+            display_cols = ['pgp_id', 'first_author', 'title', 'doi_link', 'journal', 
+                          'date_publication', 'n_development', 'n_evaluation']
+            available_display = [c for c in display_cols if c in display_df.columns]
+            
+            column_config = {
+                'title': st.column_config.TextColumn("Title", width="large"),
+                'doi_link': st.column_config.LinkColumn(
+                    "DOI",
+                    display_text="https://doi\\.org/(.+)"
+                )
+            }
+            
+            st.dataframe(
+                display_df[available_display],
+                use_container_width=True,
+                hide_index=True,
+                column_config=column_config,
+                key="pub_browse_table"
+            )
+
+
+def render_publications_tab(scores_df):
+    st.header("Publications Browser")
+    
+    pgs_search = st.text_input(
+        "Search by PGS ID",
+        placeholder="e.g., PGS000013 - shows development + all evaluation publications",
+        key="pub_pgs_search_legacy"
+    )
+    
+    if pgs_search:
+        pgs_id = pgs_search.upper().strip()
+        if not pgs_id.startswith("PGS"):
+            pgs_id = f"PGS{pgs_id.zfill(6)}"
+        
+        render_pgs_publications(pgs_id)
         st.divider()
         st.subheader("Browse All Publications")
     
