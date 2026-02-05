@@ -44,6 +44,7 @@ A Streamlit web application for exploring the Polygenic Score (PGS) Catalog data
 - Kraken Ingest Estimator with tiered gene estimates based on actual variant counts
 - Clickable DOI links for publications
 - Sidebar with quality tier info, method classification, and ancestry categories
+- **PGS ID search in Publications tab**: Search by score ID to see development publication + all external evaluation publications with source type, best AUC, and ancestry coverage
 
 ### Data Flow
 ```

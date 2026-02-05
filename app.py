@@ -47,7 +47,7 @@ data_source = get_data_source()
 from datetime import datetime
 
 CACHE_TTL_SECONDS = 30 * 24 * 60 * 60
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def get_enriched_scores_cached(_version=CACHE_VERSION):
@@ -620,52 +620,78 @@ def render_pgs_publications(pgs_id: str, scores_df):
     with info_cols[2]:
         st.metric("Trait", trait_name[:30] + "..." if len(trait_name) > 30 else trait_name)
     
+    all_pubs_df = data_source.get_publications()
+    pub_metadata = {}
+    if not all_pubs_df.empty:
+        for _, row in all_pubs_df.iterrows():
+            pub_metadata[row.get('pgp_id', '')] = {
+                'title': row.get('title', ''),
+                'journal': row.get('journal', ''),
+                'doi': row.get('doi', '')
+            }
+    
     with st.spinner(f"Fetching all evaluations for {pgs_id}..."):
         metrics_df = data_source.get_performance_metrics(pgs_id)
     
     publications = []
     
+    dev_meta = pub_metadata.get(dev_pgp, {})
     if dev_pgp:
         publications.append({
             'pgp_id': dev_pgp,
             'source_type': 'Development',
             'first_author': dev_author,
             'publication_date': dev_date,
+            'title': dev_meta.get('title', ''),
+            'journal': dev_meta.get('journal', ''),
+            'doi': dev_meta.get('doi', ''),
             'n_evaluations': 0,
             'best_auc': None,
             'ancestries': ''
         })
     
     if not metrics_df.empty:
-        eval_pubs = metrics_df.groupby('pgp_id').agg({
-            'first_author': 'first',
-            'publication_date': 'first',
-            'ppm_id': 'count',
-            'auc': lambda x: x.dropna().max() if x.notna().any() else None,
-            'ancestry': lambda x: '; '.join(sorted(set(a for anc in x.dropna() for a in anc.split('; ') if a)))
-        }).reset_index()
-        
-        eval_pubs.columns = ['pgp_id', 'first_author', 'publication_date', 'n_evaluations', 'best_auc', 'ancestries']
-        
-        for _, row in eval_pubs.iterrows():
-            is_dev = row['pgp_id'] == dev_pgp
-            if is_dev:
-                for pub in publications:
-                    if pub['pgp_id'] == dev_pgp:
-                        pub['n_evaluations'] = row['n_evaluations']
-                        pub['best_auc'] = row['best_auc']
-                        pub['ancestries'] = row['ancestries']
-                        pub['source_type'] = 'Development + Evaluation'
-            else:
-                publications.append({
-                    'pgp_id': row['pgp_id'],
-                    'source_type': 'External Evaluation',
-                    'first_author': row['first_author'],
-                    'publication_date': row['publication_date'],
-                    'n_evaluations': row['n_evaluations'],
-                    'best_auc': row['best_auc'],
-                    'ancestries': row['ancestries']
-                })
+        required_cols = ['pgp_id', 'first_author', 'publication_date', 'ppm_id']
+        if all(c in metrics_df.columns for c in required_cols):
+            agg_dict = {
+                'first_author': 'first',
+                'publication_date': 'first',
+                'ppm_id': 'count',
+            }
+            if 'auc' in metrics_df.columns:
+                agg_dict['auc'] = lambda x: x.dropna().max() if x.notna().any() else None
+            if 'ancestry' in metrics_df.columns:
+                agg_dict['ancestry'] = lambda x: '; '.join(sorted(set(a for anc in x.dropna() for a in str(anc).split('; ') if a)))
+            
+            eval_pubs = metrics_df.groupby('pgp_id').agg(agg_dict).reset_index()
+            
+            for _, row in eval_pubs.iterrows():
+                pgp = row['pgp_id']
+                is_dev = pgp == dev_pgp
+                meta = pub_metadata.get(pgp, {})
+                best_auc = row.get('auc') if 'auc' in row else None
+                ancestries = row.get('ancestry', '') if 'ancestry' in row else ''
+                
+                if is_dev:
+                    for pub in publications:
+                        if pub['pgp_id'] == dev_pgp:
+                            pub['n_evaluations'] = row['ppm_id']
+                            pub['best_auc'] = best_auc
+                            pub['ancestries'] = ancestries
+                            pub['source_type'] = 'Development + Evaluation'
+                else:
+                    publications.append({
+                        'pgp_id': pgp,
+                        'source_type': 'External Evaluation',
+                        'first_author': row['first_author'],
+                        'publication_date': row['publication_date'],
+                        'title': meta.get('title', ''),
+                        'journal': meta.get('journal', ''),
+                        'doi': meta.get('doi', ''),
+                        'n_evaluations': row['ppm_id'],
+                        'best_auc': best_auc,
+                        'ancestries': ancestries
+                    })
     
     if not publications:
         st.warning(f"No publication data found for {pgs_id}")
@@ -675,6 +701,9 @@ def render_pgs_publications(pgs_id: str, scores_df):
     
     source_emoji = {'Development': '📝', 'External Evaluation': '🔬', 'Development + Evaluation': '📝🔬'}
     pub_df['source'] = pub_df['source_type'].apply(lambda x: f"{source_emoji.get(x, '')} {x}")
+    
+    if 'doi' in pub_df.columns:
+        pub_df['doi_link'] = pub_df['doi'].apply(lambda x: f"https://doi.org/{x}" if x else '')
     
     col1, col2 = st.columns(2)
     with col1:
@@ -686,17 +715,22 @@ def render_pgs_publications(pgs_id: str, scores_df):
     
     display_df = pub_df.copy()
     display_df['best_auc'] = display_df['best_auc'].apply(lambda x: f"{x:.3f}" if pd.notna(x) else '-')
+    display_df['title_short'] = display_df['title'].apply(lambda x: x[:60] + "..." if len(str(x)) > 60 else x)
+    
+    display_cols = ['pgp_id', 'source', 'first_author', 'title_short', 'doi_link', 'n_evaluations', 'best_auc', 'ancestries']
+    available_cols = [c for c in display_cols if c in display_df.columns]
     
     st.dataframe(
-        display_df[['pgp_id', 'source', 'first_author', 'publication_date', 'n_evaluations', 'best_auc', 'ancestries']],
+        display_df[available_cols],
         use_container_width=True,
         hide_index=True,
         column_config={
-            'pgp_id': st.column_config.TextColumn("Publication ID"),
+            'pgp_id': st.column_config.TextColumn("PGP ID"),
             'source': st.column_config.TextColumn("Source Type"),
             'first_author': st.column_config.TextColumn("First Author"),
-            'publication_date': st.column_config.TextColumn("Date"),
-            'n_evaluations': st.column_config.NumberColumn("# Evaluations"),
+            'title_short': st.column_config.TextColumn("Title"),
+            'doi_link': st.column_config.LinkColumn("DOI", display_text="https://doi\\.org/(.+)"),
+            'n_evaluations': st.column_config.NumberColumn("# Evals"),
             'best_auc': st.column_config.TextColumn("Best AUC"),
             'ancestries': st.column_config.TextColumn("Ancestry Coverage")
         }
