@@ -100,7 +100,7 @@ class APIDataSource(PGSDataSource):
             try:
                 page += 1
                 if show_progress and status_text:
-                    status_text.markdown(f"**Loading data from PGS Catalog...**  \nPage {page} · {len(results):,} items loaded")
+                    status_text.markdown(f"**Loading data from PGS Catalog...**  \n\nPage {page} · {len(results):,} items loaded")
                 
                 response = self.session.get(url, params=params, timeout=60)
                 
