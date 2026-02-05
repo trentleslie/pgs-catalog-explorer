@@ -80,9 +80,16 @@ class APIDataSource(PGSDataSource):
             params = {}
         params['limit'] = 250
         
-        while url:
+        max_pages = 100
+        page_count = 0
+        
+        while url and page_count < max_pages:
             try:
                 response = self.session.get(url, params=params, timeout=60)
+                
+                if response.status_code == 500:
+                    break
+                
                 response.raise_for_status()
                 data = response.json()
                 
@@ -90,10 +97,13 @@ class APIDataSource(PGSDataSource):
                     results.extend(data['results'])
                     url = data.get('next')
                     params = {}
+                    page_count += 1
                 else:
                     results = data if isinstance(data, list) else [data]
                     break
             except requests.RequestException as e:
+                if results:
+                    break
                 st.error(f"API request failed: {e}")
                 break
         
@@ -193,6 +203,14 @@ class APIDataSource(PGSDataSource):
         
         rows = []
         for trait in traits:
+            trait_cats = trait.get('trait_categories', [])
+            cat_labels = []
+            for c in trait_cats:
+                if isinstance(c, dict):
+                    cat_labels.append(c.get('label', ''))
+                elif isinstance(c, str):
+                    cat_labels.append(c)
+            
             rows.append({
                 'trait_id': trait.get('id', ''),
                 'label': trait.get('label', ''),
@@ -200,7 +218,7 @@ class APIDataSource(PGSDataSource):
                 'url': trait.get('url', ''),
                 'associated_pgs_ids': '; '.join(trait.get('associated_pgs_ids', [])),
                 'n_scores': len(trait.get('associated_pgs_ids', [])),
-                'categories': '; '.join([c.get('label', '') for c in trait.get('trait_categories', [])]),
+                'categories': '; '.join(cat_labels),
             })
         
         return pd.DataFrame(rows)
@@ -215,10 +233,20 @@ class APIDataSource(PGSDataSource):
         
         rows = []
         for cat in categories:
+            if not isinstance(cat, dict):
+                continue
+            efo_traits = cat.get('efotraits', [])
+            trait_ids = []
+            for t in efo_traits:
+                if isinstance(t, dict):
+                    trait_ids.append(t.get('id', ''))
+                elif isinstance(t, str):
+                    trait_ids.append(t)
+            
             rows.append({
                 'category': cat.get('label', ''),
-                'n_traits': len(cat.get('efotraits', [])),
-                'trait_ids': '; '.join([t.get('id', '') for t in cat.get('efotraits', [])]),
+                'n_traits': len(efo_traits),
+                'trait_ids': '; '.join(trait_ids),
             })
         
         return pd.DataFrame(rows)
