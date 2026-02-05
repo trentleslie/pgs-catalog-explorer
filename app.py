@@ -558,19 +558,24 @@ def render_publications_tab():
                 )
             
             if 'doi' in display_df.columns:
-                display_df['title_link'] = display_df.apply(
-                    lambda row: f"[{row.get('title', 'N/A')}](https://doi.org/{row['doi']})" if row.get('doi') else row.get('title', 'N/A'),
-                    axis=1
+                display_df['doi_link'] = display_df['doi'].apply(
+                    lambda x: f"https://doi.org/{x}" if x else ""
                 )
             
-            display_cols = ['pgp_id', 'first_author', 'title_link', 'best_tier', 'journal', 
+            display_cols = ['pgp_id', 'first_author', 'title', 'doi_link', 'best_tier', 'journal', 
                           'date_publication', 'n_development', 'n_evaluation']
             available_display = [c for c in display_cols if c in display_df.columns]
+            
+            column_config = {
+                'doi_link': st.column_config.LinkColumn("DOI Link"),
+                'title': st.column_config.TextColumn("Title", width="large")
+            }
             
             st.dataframe(
                 display_df[available_display],
                 use_container_width=True,
-                hide_index=True
+                hide_index=True,
+                column_config=column_config
             )
 
 
