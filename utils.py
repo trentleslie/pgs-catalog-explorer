@@ -446,8 +446,12 @@ def compute_kraken_stats(df: pd.DataFrame) -> dict:
             'kraken_eligible': 0,
             'total_variants': 0,
             'avg_variants': 0,
+            'median_variants': 0,
+            'min_variants': 0,
             'max_variants': 0,
-            'estimated_gene_edges': 0
+            'min_gene_edges': 0,
+            'max_gene_edges': 0,
+            'total_gene_edges': 0
         }
     
     total = len(df)
@@ -479,9 +483,30 @@ def compute_kraken_stats(df: pd.DataFrame) -> dict:
     
     total_variants = int(df['n_variants'].sum())
     avg_variants = int(df['n_variants'].mean()) if total > 0 else 0
+    median_variants = int(df['n_variants'].median()) if total > 0 else 0
+    min_variants = int(df['n_variants'].min()) if total > 0 else 0
     max_variants = int(df['n_variants'].max()) if total > 0 else 0
     
-    estimated_gene_edges = kraken_eligible * 50
+    eligible_df = df[eligible_mask] if eligible_mask.any() else df.head(0)
+    
+    def get_gene_estimate(n_variants):
+        """Tiered gene estimate based on variant count."""
+        if n_variants < 1000:
+            return 50
+        elif n_variants < 100000:
+            return 200
+        else:
+            return 500
+    
+    if len(eligible_df) > 0:
+        gene_estimates = eligible_df['n_variants'].apply(get_gene_estimate)
+        min_gene_edges = int(gene_estimates.min() * len(eligible_df)) if len(eligible_df) > 0 else 0
+        max_gene_edges = int(gene_estimates.max() * len(eligible_df)) if len(eligible_df) > 0 else 0
+        total_gene_edges = int(gene_estimates.sum())
+    else:
+        min_gene_edges = 0
+        max_gene_edges = 0
+        total_gene_edges = 0
     
     return {
         'total_scores': total,
@@ -495,8 +520,12 @@ def compute_kraken_stats(df: pd.DataFrame) -> dict:
         'kraken_eligible': kraken_eligible,
         'total_variants': total_variants,
         'avg_variants': avg_variants,
+        'median_variants': median_variants,
+        'min_variants': min_variants,
         'max_variants': max_variants,
-        'estimated_gene_edges': estimated_gene_edges
+        'min_gene_edges': min_gene_edges,
+        'max_gene_edges': max_gene_edges,
+        'total_gene_edges': total_gene_edges
     }
 
 

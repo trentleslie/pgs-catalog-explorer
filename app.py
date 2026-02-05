@@ -252,6 +252,49 @@ def render_scores_tab():
             
             st.caption("Charts reflect ALL scores matching current filters, not just the displayed 100 rows.")
             
+            st.subheader("Variant Count Distribution")
+            
+            if 'n_variants' in filtered_df.columns and not filtered_df['n_variants'].isna().all():
+                variant_data = filtered_df['n_variants'].dropna()
+                
+                if len(variant_data) > 0:
+                    stat_col1, stat_col2, stat_col3, stat_col4, stat_col5 = st.columns(5)
+                    with stat_col1:
+                        st.metric("Total Variants", f"{int(variant_data.sum()):,}")
+                    with stat_col2:
+                        st.metric("Mean", f"{int(variant_data.mean()):,}")
+                    with stat_col3:
+                        st.metric("Median", f"{int(variant_data.median()):,}")
+                    with stat_col4:
+                        st.metric("Min", f"{int(variant_data.min()):,}")
+                    with stat_col5:
+                        st.metric("Max", f"{int(variant_data.max()):,}")
+                    
+                    use_log_scale = st.toggle("Use log scale (recommended for wide range)", value=True, key="variant_log_toggle")
+                    
+                    if use_log_scale:
+                        import numpy as np
+                        log_data = np.log10(variant_data[variant_data > 0])
+                        fig = px.histogram(
+                            x=log_data,
+                            nbins=30,
+                            title=f"Variant Count Distribution (log₁₀ scale) - {len(variant_data):,} scores",
+                            labels={'x': 'log₁₀(Variants)', 'y': 'Number of Scores'}
+                        )
+                        tick_vals = list(range(int(log_data.min()), int(log_data.max()) + 2))
+                        tick_text = [f"10^{v}" for v in tick_vals]
+                        fig.update_xaxes(tickvals=tick_vals, ticktext=tick_text)
+                    else:
+                        fig = px.histogram(
+                            x=variant_data,
+                            nbins=30,
+                            title=f"Variant Count Distribution (linear scale) - {len(variant_data):,} scores",
+                            labels={'x': 'Variants', 'y': 'Number of Scores'}
+                        )
+                    
+                    fig.update_layout(height=300)
+                    st.plotly_chart(fig, use_container_width=True)
+            
             display_df = filtered_df.head(100).copy()
             
             if 'has_efo' in display_df.columns:
@@ -323,15 +366,9 @@ def render_kraken_estimator(df: pd.DataFrame):
     st.markdown(f"""
 - PRS nodes: **{stats['kraken_eligible']:,}**
 - PRS → Disease edges: **{stats['kraken_eligible']:,}** (via EFO/MONDO/HP)
-- PRS → Gene edges: **~{stats['estimated_gene_edges']:,}** (est. 50 genes per PRS)
-""")
-    
-    st.markdown("---")
-    st.markdown("**Variant summary:**")
-    st.markdown(f"""
-- Total variants: **~{stats['total_variants']:,}** (across all scores)
-- Avg variants/score: **{stats['avg_variants']:,}**
-- Max variants: **{stats['max_variants']:,}**
+- PRS → Gene edges: **~{stats['min_gene_edges']:,} - {stats['max_gene_edges']:,}**  
+  *(tiered: <1K variants=50, 1K-100K=200, >100K=500 genes/PRS)*
+- If storing all variant edges: **~{stats['total_variants']:,}** ⚠️
 """)
 
 
