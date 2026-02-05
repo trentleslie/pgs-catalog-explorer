@@ -1,12 +1,13 @@
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, Tuple
 import requests
 import pandas as pd
 import streamlit as st
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 BASE_URL = "https://www.pgscatalog.org/rest"
-CACHE_TTL = timedelta(days=7)
+CACHE_TTL = timedelta(days=30)
+FORCE_REFRESH_DAYS = 30
 
 
 class PGSDataSource(ABC):
@@ -142,6 +143,34 @@ class APIDataSource(PGSDataSource):
             st.error(f"API request failed: {e}")
             return {}
     
+    def _get_api_count(self, endpoint: str) -> int:
+        """Get total count from API endpoint with minimal data transfer (limit=1)."""
+        url = f"{self.base_url}{endpoint}"
+        try:
+            response = self.session.get(url, params={'limit': 1}, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            return data.get('count', 0) if isinstance(data, dict) else 0
+        except requests.RequestException:
+            return -1
+    
+    def get_api_counts(self) -> Tuple[int, int]:
+        """Get current API counts for scores and evaluations."""
+        scores_count = self._get_api_count('/score/all')
+        evals_count = self._get_api_count('/performance/all')
+        return scores_count, evals_count
+    
+    def check_cache_freshness(self, cached_scores_count: int, cached_evals_count: int) -> Tuple[bool, int, int]:
+        """Check if cache is fresh by comparing counts with API.
+        
+        Returns: (is_fresh, api_scores_count, api_evals_count)
+        """
+        api_scores, api_evals = self.get_api_counts()
+        if api_scores < 0 or api_evals < 0:
+            return True, cached_scores_count, cached_evals_count
+        is_fresh = (api_scores == cached_scores_count and api_evals == cached_evals_count)
+        return is_fresh, api_scores, api_evals
+    
     @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
     def get_scores(_self, filters: Optional[dict] = None) -> pd.DataFrame:
         """Get all scores with optional filtering."""
@@ -150,7 +179,8 @@ class APIDataSource(PGSDataSource):
             if filters.get('pgs_ids'):
                 params['filter_ids'] = ','.join(filters['pgs_ids'])
         
-        scores = _self._fetch_paginated('/score/all', params)
+        callback = getattr(_self, '_progress_callback', None)
+        scores = _self._fetch_paginated('/score/all', params, progress_callback=callback)
         
         if not scores:
             return pd.DataFrame()
@@ -450,7 +480,8 @@ class APIDataSource(PGSDataSource):
         - n_ancestry_groups: Number of unique ancestry groups evaluated
         - ancestry_groups: Semicolon-separated list of ancestry groups
         """
-        results = _self._fetch_paginated('/performance/all')
+        callback = getattr(_self, '_progress_callback', None)
+        results = _self._fetch_paginated('/performance/all', progress_callback=callback)
         
         if not results:
             return pd.DataFrame()

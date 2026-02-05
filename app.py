@@ -44,28 +44,102 @@ st.markdown("""
 data_source = get_data_source()
 
 
-@st.cache_data(ttl=86400, show_spinner=False)
-def get_enriched_scores():
+from datetime import datetime
+
+CACHE_TTL_SECONDS = 30 * 24 * 60 * 60
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
+def get_enriched_scores_cached():
     """Get scores dataframe enriched with method classification and quality tiers."""
     scores_df = data_source.get_scores()
     eval_summary_df = data_source.get_evaluation_summary()
     
     if scores_df.empty:
-        return scores_df, eval_summary_df
+        return scores_df, eval_summary_df, datetime.now().isoformat()
     
     scores_df = add_method_classification(scores_df)
     scores_df = add_quality_tiers(scores_df, eval_summary_df)
+    return scores_df, eval_summary_df, datetime.now().isoformat()
+
+
+def load_data_with_smart_cache():
+    """Load data with smart cache validation and progress display."""
+    if 'cache_metadata' not in st.session_state:
+        st.session_state.cache_metadata = {
+            'scores_count': 0,
+            'evals_count': 0,
+            'last_checked': None,
+            'last_loaded': None,
+            'is_fresh': None
+        }
+    
+    status_container = st.empty()
+    progress_text = st.empty()
+    
+    status_container.markdown("**Checking PGS Catalog for updates...**")
+    api_scores, api_evals = data_source.get_api_counts()
+    
+    cached_scores = st.session_state.cache_metadata.get('scores_count', 0)
+    cached_evals = st.session_state.cache_metadata.get('evals_count', 0)
+    last_loaded = st.session_state.cache_metadata.get('last_loaded')
+    
+    cache_stale = False
+    stale_reason = None
+    
+    if api_scores > 0 and (api_scores != cached_scores or api_evals != cached_evals):
+        cache_stale = True
+        stale_reason = "new data"
+    
+    if last_loaded:
+        try:
+            loaded_dt = datetime.fromisoformat(last_loaded)
+            age_days = (datetime.now() - loaded_dt).days
+            if age_days >= 30:
+                cache_stale = True
+                stale_reason = f"cache is {age_days} days old"
+        except:
+            pass
+    
+    if cache_stale and cached_scores > 0:
+        reason_msg = f" ({stale_reason})" if stale_reason else ""
+        status_container.markdown(f"**Refreshing data{reason_msg}...** API: {api_scores:,} scores, {api_evals:,} evaluations")
+        get_enriched_scores_cached.clear()
+        data_source.get_scores.clear()
+        data_source.get_evaluation_summary.clear()
+    
+    def progress_callback(current_page, total_pages, loaded_items, total_items, complete=False):
+        if complete:
+            progress_text.markdown(f"**Loading...** ✓ Complete · {loaded_items:,} items")
+        elif total_pages:
+            progress_text.markdown(f"**Loading...** Page {current_page} of {total_pages} · {loaded_items:,} of {total_items:,} items")
+        else:
+            progress_text.markdown(f"**Loading...** Page {current_page} · {loaded_items:,} items")
+    
+    data_source._progress_callback = progress_callback
+    
+    scores_df, eval_summary_df, load_timestamp = get_enriched_scores_cached()
+    
+    if not scores_df.empty:
+        st.session_state.cache_metadata = {
+            'scores_count': len(scores_df),
+            'evals_count': len(eval_summary_df) if not eval_summary_df.empty else 0,
+            'api_scores_count': api_scores if api_scores > 0 else len(scores_df),
+            'api_evals_count': api_evals if api_evals > 0 else (len(eval_summary_df) if not eval_summary_df.empty else 0),
+            'last_checked': datetime.now().isoformat(),
+            'last_loaded': load_timestamp,
+            'is_fresh': not cache_stale
+        }
+    
+    status_container.empty()
+    progress_text.empty()
     return scores_df, eval_summary_df
-
-
 
 
 def main():
     st.markdown('<p class="main-header">PGS Catalog Explorer</p>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Browse and explore polygenic scores, traits, and publications from the PGS Catalog</p>', unsafe_allow_html=True)
     
-    with st.spinner("Loading data from PGS Catalog (this may take a few minutes on first load)..."):
-        scores_df, eval_summary_df = get_enriched_scores()
+    scores_df, eval_summary_df = load_data_with_smart_cache()
     
     if scores_df.empty:
         st.warning("No scores loaded. Please check your internet connection.")
@@ -733,6 +807,37 @@ def render_performance_tab(scores_df):
 
 
 def render_sidebar_info(eval_summary_df):
+    st.header("Data Status")
+    
+    cache_meta = st.session_state.get('cache_metadata', {})
+    scores_count = cache_meta.get('scores_count', 0)
+    evals_count = cache_meta.get('evals_count', 0)
+    api_scores = cache_meta.get('api_scores_count', 0)
+    api_evals = cache_meta.get('api_evals_count', 0)
+    last_checked = cache_meta.get('last_checked')
+    is_fresh = cache_meta.get('is_fresh', True)
+    
+    if scores_count > 0:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Scores", f"{scores_count:,}")
+        with col2:
+            st.metric("Evaluations", f"{evals_count:,}")
+        
+        if last_checked:
+            try:
+                checked_dt = datetime.fromisoformat(last_checked)
+                st.caption(f"Last checked: {checked_dt.strftime('%b %d, %Y %H:%M')}")
+            except:
+                pass
+        
+        if is_fresh:
+            st.success("✓ Up to date with PGS Catalog", icon="✅")
+        elif api_scores > 0:
+            st.info(f"API has {api_scores:,} scores, {api_evals:,} evaluations")
+    
+    st.divider()
+    
     st.header("About")
     st.markdown("""
     This app explores the [PGS Catalog](https://www.pgscatalog.org/), 
@@ -747,7 +852,7 @@ def render_sidebar_info(eval_summary_df):
     - Analyze performance metrics with ancestry context
     
     **Data Source:**  
-    PGS Catalog REST API (cached 7 days)
+    PGS Catalog REST API (cached up to 30 days, auto-refreshes when new data available)
     
     **Links:**
     - [PGS Catalog](https://www.pgscatalog.org/)
