@@ -20,9 +20,11 @@ A Streamlit web application for exploring the Polygenic Score (PGS) Catalog data
 
 **data_layer.py**
 - `PGSDataSource`: Abstract base class defining the data interface
-- `APIDataSource`: REST API implementation with 24hr caching
+- `APIDataSource`: REST API implementation with smart caching (30-day TTL, auto-refresh)
 - `get_data_source()`: Factory function for backend swapping
 - `get_evaluation_summary()`: Fetches evaluation counts and ancestry coverage per score
+- `get_api_counts()`: Quick count check to detect new data (limit=1 requests)
+- `get_performance_metrics()`: Returns individual metric columns (AUC, R², OR, HR, Beta)
 
 **utils.py**
 - Method classification (LD-aware vs C+T approaches)
@@ -60,8 +62,15 @@ PGS Catalog REST API
 - Base URL: `https://www.pgscatalog.org/rest/`
 - Rate limit: 100 queries/minute
 - Pagination: 100 results per page, follows 'next' until null (loads all ~5,200 scores)
-- Cache TTL: 7 days
-- Progress indicator: Shows loading progress with page count and items loaded
+- Cache TTL: 30 days with smart validation
+- Progress indicator: Shows "Page X of Y · X of Y items" during actual API fetches
+
+### Smart Caching System
+- On each page load, pings API with `limit=1` to get current counts (fast, minimal data transfer)
+- Compares API counts with cached data counts
+- If counts differ → new data available → cache is invalidated and refreshed
+- If cache is >30 days old → forced refresh regardless of counts
+- Sidebar shows: cached counts, last checked timestamp, freshness status (✓ Up to date)
 
 ### Method Classification
 High (LD-aware): PRS-CS, PRS-CSx, LDpred, LDpred2, lassosum, SBayesR, MegaPRS
