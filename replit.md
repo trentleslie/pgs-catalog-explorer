@@ -70,11 +70,16 @@ Uses case-insensitive matching on method_name field.
 - **Bronze**: Moderate (C+T) method + ≥1 evaluation
 - **Unrated**: Missing evaluations or Other/Unknown method
 
+### Preset Filters
+- **ARK-Ready**: Gold tier + EFO mapping + GRCh38 available
+- **Kraken-Ready**: Any rated tier (Gold/Silver/Bronze) + EFO mapping + harmonized files
+- **All High-Quality**: Gold + Silver tiers
+
 ### Kraken-Eligible Criteria
 A score is Kraken-eligible if ALL of:
 1. Has EFO/MONDO mapping (hard requirement)
 2. Has harmonized file (GRCh37 or GRCh38)
-3. Quality tier is Gold, Silver, or Bronze (not Unrated)
+3. Quality tier is Gold, Silver, or Bronze (excludes Unrated)
 
 ### Kraken Ingest CSV Columns
 pgs_id, name, trait_efo, trait_reported, method_name, method_class, quality_tier, n_variants, n_evaluations, ancestry_dev, ancestry_eval, grch37_available, grch38_available, publication_doi

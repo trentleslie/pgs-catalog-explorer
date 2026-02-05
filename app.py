@@ -93,7 +93,7 @@ def render_scores_tab():
         if st.button("ARK-Ready", help="Gold tier + EFO mapping + GRCh38"):
             st.session_state.preset_filter = 'ark'
     with preset_col2:
-        if st.button("Kraken-Ready", help="Silver+ tier + EFO mapping + harmonized files"):
+        if st.button("Kraken-Ready", help="Any rated tier (Gold/Silver/Bronze) + EFO mapping + harmonized files"):
             st.session_state.preset_filter = 'kraken'
     with preset_col3:
         if st.button("All High-Quality", help="Gold + Silver tiers"):
