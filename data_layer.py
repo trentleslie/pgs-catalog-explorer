@@ -1,0 +1,336 @@
+from abc import ABC, abstractmethod
+from typing import Optional
+import requests
+import pandas as pd
+import streamlit as st
+from datetime import timedelta
+
+BASE_URL = "https://www.pgscatalog.org/rest"
+CACHE_TTL = timedelta(hours=24)
+
+
+class PGSDataSource(ABC):
+    """Abstract interface for PGS data access.
+    
+    This abstraction allows swapping between REST API (development) 
+    and DuckDB bulk files (production) without changing the UI code.
+    """
+    
+    @abstractmethod
+    def get_scores(self, filters: Optional[dict] = None) -> pd.DataFrame:
+        """Get all scores with optional filtering."""
+        pass
+    
+    @abstractmethod
+    def get_score_details(self, pgs_id: str) -> dict:
+        """Get detailed information for a single score."""
+        pass
+    
+    @abstractmethod
+    def get_traits(self) -> pd.DataFrame:
+        """Get all traits."""
+        pass
+    
+    @abstractmethod
+    def get_trait_categories(self) -> pd.DataFrame:
+        """Get trait categories."""
+        pass
+    
+    @abstractmethod
+    def get_publications(self) -> pd.DataFrame:
+        """Get all publications."""
+        pass
+    
+    @abstractmethod
+    def get_publication_details(self, pgp_id: str) -> dict:
+        """Get detailed information for a single publication."""
+        pass
+    
+    @abstractmethod
+    def get_performance_metrics(self, pgs_id: Optional[str] = None) -> pd.DataFrame:
+        """Get performance metrics, optionally filtered by score ID."""
+        pass
+    
+    @abstractmethod
+    def get_ancestry_categories(self) -> dict:
+        """Get ancestry category definitions."""
+        pass
+
+
+class APIDataSource(PGSDataSource):
+    """REST API implementation for PGS Catalog data access.
+    
+    Uses the PGS Catalog REST API with caching for efficient queries.
+    Rate limited to 100 queries/minute by the API.
+    """
+    
+    def __init__(self):
+        self.base_url = BASE_URL
+        self.session = requests.Session()
+        self.session.headers.update({
+            'Accept': 'application/json',
+            'User-Agent': 'PGS-Catalog-Explorer/1.0'
+        })
+    
+    def _fetch_paginated(self, endpoint: str, params: Optional[dict] = None) -> list:
+        """Fetch all pages from a paginated endpoint."""
+        results = []
+        url = f"{self.base_url}{endpoint}"
+        if params is None:
+            params = {}
+        params['limit'] = 250
+        
+        while url:
+            try:
+                response = self.session.get(url, params=params, timeout=60)
+                response.raise_for_status()
+                data = response.json()
+                
+                if isinstance(data, dict) and 'results' in data:
+                    results.extend(data['results'])
+                    url = data.get('next')
+                    params = {}
+                else:
+                    results = data if isinstance(data, list) else [data]
+                    break
+            except requests.RequestException as e:
+                st.error(f"API request failed: {e}")
+                break
+        
+        return results
+    
+    def _fetch_single(self, endpoint: str) -> dict:
+        """Fetch a single resource."""
+        url = f"{self.base_url}{endpoint}"
+        try:
+            response = self.session.get(url, timeout=30)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            st.error(f"API request failed: {e}")
+            return {}
+    
+    @st.cache_data(ttl=CACHE_TTL, show_spinner="Loading scores from PGS Catalog...")
+    def get_scores(_self, filters: Optional[dict] = None) -> pd.DataFrame:
+        """Get all scores with optional filtering."""
+        params = {}
+        if filters:
+            if filters.get('pgs_ids'):
+                params['filter_ids'] = ','.join(filters['pgs_ids'])
+        
+        scores = _self._fetch_paginated('/score/all', params)
+        
+        if not scores:
+            return pd.DataFrame()
+        
+        rows = []
+        for score in scores:
+            trait_names = []
+            trait_ids = []
+            has_efo_mapping = False
+            
+            for trait in score.get('trait_efo', []):
+                trait_names.append(trait.get('label', ''))
+                trait_ids.append(trait.get('id', ''))
+                if trait.get('id', '').startswith(('EFO_', 'MONDO_')):
+                    has_efo_mapping = True
+            
+            harmonized = score.get('ftp_harmonized_scoring_files', {})
+            grch37_available = bool(harmonized.get('GRCh37', {}).get('positions'))
+            grch38_available = bool(harmonized.get('GRCh38', {}).get('positions'))
+            
+            ancestry_dist = score.get('ancestry_distribution', {})
+            dev_ancestry = []
+            eval_ancestry = []
+            if ancestry_dist:
+                for stage, data in ancestry_dist.items():
+                    if 'dev' in stage.lower() or 'gwas' in stage.lower():
+                        dev_ancestry.extend(data.keys() if isinstance(data, dict) else [])
+                    elif 'eval' in stage.lower():
+                        eval_ancestry.extend(data.keys() if isinstance(data, dict) else [])
+            
+            pub = score.get('publication', {})
+            
+            rows.append({
+                'pgs_id': score.get('id', ''),
+                'name': score.get('name', ''),
+                'trait_names': '; '.join(trait_names),
+                'trait_ids': '; '.join(trait_ids),
+                'has_efo_mapping': has_efo_mapping,
+                'method_name': score.get('method_name', ''),
+                'method_params': score.get('method_params', ''),
+                'n_variants': score.get('variants_number', 0),
+                'pgp_id': pub.get('id', ''),
+                'publication_date': pub.get('date_publication', ''),
+                'journal': pub.get('journal', ''),
+                'first_author': pub.get('firstauthor', ''),
+                'doi': pub.get('doi', ''),
+                'ftp_scoring_file': score.get('ftp_scoring_file', ''),
+                'grch37_available': grch37_available,
+                'grch38_available': grch38_available,
+                'grch37_url': harmonized.get('GRCh37', {}).get('positions', ''),
+                'grch38_url': harmonized.get('GRCh38', {}).get('positions', ''),
+                'dev_ancestry': '; '.join(set(dev_ancestry)),
+                'eval_ancestry': '; '.join(set(eval_ancestry)),
+                'weight_type': score.get('weight_type', ''),
+                'license': score.get('license', ''),
+                'date_release': score.get('date_release', ''),
+            })
+        
+        return pd.DataFrame(rows)
+    
+    def get_score_details(self, pgs_id: str) -> dict:
+        """Get detailed information for a single score."""
+        return self._fetch_single(f'/score/{pgs_id}')
+    
+    @st.cache_data(ttl=CACHE_TTL, show_spinner="Loading traits...")
+    def get_traits(_self) -> pd.DataFrame:
+        """Get all traits."""
+        traits = _self._fetch_paginated('/trait/all')
+        
+        if not traits:
+            return pd.DataFrame()
+        
+        rows = []
+        for trait in traits:
+            rows.append({
+                'trait_id': trait.get('id', ''),
+                'label': trait.get('label', ''),
+                'description': trait.get('description', ''),
+                'url': trait.get('url', ''),
+                'associated_pgs_ids': '; '.join(trait.get('associated_pgs_ids', [])),
+                'n_scores': len(trait.get('associated_pgs_ids', [])),
+                'categories': '; '.join([c.get('label', '') for c in trait.get('trait_categories', [])]),
+            })
+        
+        return pd.DataFrame(rows)
+    
+    @st.cache_data(ttl=CACHE_TTL, show_spinner="Loading trait categories...")
+    def get_trait_categories(_self) -> pd.DataFrame:
+        """Get trait categories."""
+        categories = _self._fetch_paginated('/trait_category/all')
+        
+        if not categories:
+            return pd.DataFrame()
+        
+        rows = []
+        for cat in categories:
+            rows.append({
+                'category': cat.get('label', ''),
+                'n_traits': len(cat.get('efotraits', [])),
+                'trait_ids': '; '.join([t.get('id', '') for t in cat.get('efotraits', [])]),
+            })
+        
+        return pd.DataFrame(rows)
+    
+    @st.cache_data(ttl=CACHE_TTL, show_spinner="Loading publications...")
+    def get_publications(_self) -> pd.DataFrame:
+        """Get all publications."""
+        publications = _self._fetch_paginated('/publication/all')
+        
+        if not publications:
+            return pd.DataFrame()
+        
+        rows = []
+        for pub in publications:
+            associated = pub.get('associated_pgs_ids', {})
+            dev_scores = associated.get('development', [])
+            eval_scores = associated.get('evaluation', [])
+            
+            rows.append({
+                'pgp_id': pub.get('id', ''),
+                'title': pub.get('title', ''),
+                'first_author': pub.get('firstauthor', ''),
+                'journal': pub.get('journal', ''),
+                'date_publication': pub.get('date_publication', ''),
+                'doi': pub.get('doi', ''),
+                'pmid': pub.get('PMID', ''),
+                'n_development': len(dev_scores),
+                'n_evaluation': len(eval_scores),
+                'development_pgs_ids': '; '.join(dev_scores),
+                'evaluation_pgs_ids': '; '.join(eval_scores),
+                'date_release': pub.get('date_release', ''),
+            })
+        
+        return pd.DataFrame(rows)
+    
+    def get_publication_details(self, pgp_id: str) -> dict:
+        """Get detailed information for a single publication."""
+        return self._fetch_single(f'/publication/{pgp_id}')
+    
+    @st.cache_data(ttl=CACHE_TTL, show_spinner="Loading performance metrics...")
+    def get_performance_metrics(_self, pgs_id: Optional[str] = None) -> pd.DataFrame:
+        """Get performance metrics, optionally filtered by score ID."""
+        if pgs_id:
+            params = {'pgs_id': pgs_id}
+            metrics = _self._fetch_paginated('/performance/search', params)
+        else:
+            metrics = _self._fetch_paginated('/performance/all')
+        
+        if not metrics:
+            return pd.DataFrame()
+        
+        rows = []
+        for metric in metrics:
+            pub = metric.get('publication', {})
+            
+            effect_sizes = metric.get('effect_sizes', [])
+            class_acc = metric.get('class_acc', [])
+            other_metrics = metric.get('othermetrics', [])
+            
+            all_metrics = []
+            for m in effect_sizes + class_acc + other_metrics:
+                name = m.get('name_short', m.get('name_long', ''))
+                estimate = m.get('estimate', '')
+                ci_lower = m.get('ci_lower', '')
+                ci_upper = m.get('ci_upper', '')
+                if estimate:
+                    if ci_lower and ci_upper:
+                        all_metrics.append(f"{name}: {estimate} [{ci_lower}-{ci_upper}]")
+                    else:
+                        all_metrics.append(f"{name}: {estimate}")
+            
+            samples = metric.get('sampleset', {}).get('samples', [])
+            sample_size = 0
+            ancestries = []
+            cohorts = []
+            for sample in samples:
+                sample_size += sample.get('sample_number', 0) or 0
+                ancestry = sample.get('ancestry_broad', '')
+                if ancestry:
+                    ancestries.append(ancestry)
+                for cohort in sample.get('cohorts', []):
+                    cohorts.append(cohort.get('name_short', cohort.get('name_full', '')))
+            
+            rows.append({
+                'ppm_id': metric.get('id', ''),
+                'pgs_id': metric.get('associated_pgs_id', ''),
+                'pgp_id': pub.get('id', ''),
+                'first_author': pub.get('firstauthor', ''),
+                'publication_date': pub.get('date_publication', ''),
+                'phenotyping_reported': metric.get('phenotyping_reported', ''),
+                'covariates': metric.get('covariates', ''),
+                'sample_size': sample_size,
+                'ancestry': '; '.join(set(ancestries)),
+                'cohorts': '; '.join(set(cohorts)),
+                'metrics': '; '.join(all_metrics),
+                'effect_sizes': effect_sizes,
+                'class_acc': class_acc,
+                'other_metrics': other_metrics,
+            })
+        
+        return pd.DataFrame(rows)
+    
+    @st.cache_data(ttl=CACHE_TTL)
+    def get_ancestry_categories(_self) -> dict:
+        """Get ancestry category definitions."""
+        return _self._fetch_single('/ancestry_categories')
+
+
+def get_data_source() -> PGSDataSource:
+    """Factory function to get the configured data source.
+    
+    Currently returns APIDataSource. In production, this could be
+    configured to return DuckDBDataSource for better performance.
+    """
+    return APIDataSource()
