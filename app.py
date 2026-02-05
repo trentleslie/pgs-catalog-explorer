@@ -7,7 +7,7 @@ from utils import (
     add_method_classification, add_quality_tiers, filter_scores, filter_traits, filter_publications,
     export_scores_csv, export_traits_csv, export_publications_csv, export_kraken_ingest_csv,
     get_method_class_colors, get_ancestry_colors, get_quality_tier_colors, 
-    classify_method, compute_kraken_stats
+    classify_method, compute_kraken_stats, compute_trait_tier_stats, compute_publication_tier_stats
 )
 
 st.set_page_config(
@@ -44,6 +44,20 @@ st.markdown("""
 data_source = get_data_source()
 
 
+@st.cache_data(ttl=86400, show_spinner="Loading enriched scores data...")
+def get_enriched_scores():
+    """Get scores dataframe enriched with method classification and quality tiers."""
+    scores_df = data_source.get_scores()
+    eval_summary_df = data_source.get_evaluation_summary()
+    
+    if scores_df.empty:
+        return scores_df, eval_summary_df
+    
+    scores_df = add_method_classification(scores_df)
+    scores_df = add_quality_tiers(scores_df, eval_summary_df)
+    return scores_df, eval_summary_df
+
+
 def main():
     st.markdown('<p class="main-header">PGS Catalog Explorer</p>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Browse and explore polygenic scores, traits, and publications from the PGS Catalog</p>', unsafe_allow_html=True)
@@ -69,15 +83,11 @@ def main():
 def render_scores_tab():
     st.header("Polygenic Scores Browser")
     
-    scores_df = data_source.get_scores()
-    eval_summary_df = data_source.get_evaluation_summary()
+    scores_df, eval_summary_df = get_enriched_scores()
     
     if scores_df.empty:
         st.warning("No scores loaded. Please check your internet connection.")
         return
-    
-    scores_df = add_method_classification(scores_df)
-    scores_df = add_quality_tiers(scores_df, eval_summary_df)
     
     if not eval_summary_df.empty:
         eval_coverage = len(eval_summary_df)
@@ -142,7 +152,16 @@ def render_scores_tab():
             help="High: PRS-CS, LDpred2, lassosum, etc. Moderate: C+T, PRSice, etc."
         )
         
-        has_efo = st.checkbox("Has EFO/MONDO mapping only", value=default_efo, help="Filter to scores with ontology mappings")
+        st.write("**Ontology Mapping**")
+        ontology_options = ['EFO only', 'MONDO only', 'HP only', 'Multiple', 'No mapping']
+        default_ont = ['EFO only', 'MONDO only', 'HP only', 'Multiple'] if default_efo else []
+        ontology_filters = st.multiselect(
+            "Select ontology types",
+            options=ontology_options,
+            default=default_ont if default_ont else None,
+            help="EFO/MONDO/HP mappings enable PRS→Disease edges in Kraken. 'No mapping' excluded from Kraken.",
+            label_visibility="collapsed"
+        )
         
         st.write("**Harmonized Files**")
         has_grch37 = st.checkbox("GRCh37 available", value=default_grch37)
@@ -162,7 +181,7 @@ def render_scores_tab():
             search_query=search if search else None,
             method_classes=method_classes if method_classes else None,
             quality_tiers=quality_tiers if quality_tiers else None,
-            has_efo_only=has_efo,
+            ontology_filters=ontology_filters if ontology_filters else None,
             has_grch37=has_grch37,
             has_grch38=has_grch38,
             min_variants=min_var,
@@ -233,11 +252,20 @@ def render_scores_tab():
             
             st.caption("Charts reflect ALL scores matching current filters, not just the displayed 100 rows.")
             
-            display_cols = ['pgs_id', 'name', 'trait_names', 'quality_tier', 'method_class', 
-                          'n_evaluations', 'n_variants', 'has_efo_mapping', 'grch38_available', 'first_author']
-            available_display = [c for c in display_cols if c in filtered_df.columns]
+            display_df = filtered_df.head(100).copy()
             
-            display_df = filtered_df[available_display].head(100).copy()
+            if 'has_efo' in display_df.columns:
+                display_df['efo_mapped'] = display_df['has_efo'].apply(lambda x: '✓' if x else '✗')
+            if 'has_mondo' in display_df.columns:
+                display_df['mondo_mapped'] = display_df['has_mondo'].apply(lambda x: '✓' if x else '✗')
+            if 'has_hp' in display_df.columns:
+                display_df['hp_mapped'] = display_df['has_hp'].apply(lambda x: '✓' if x else '✗')
+            
+            display_cols = ['pgs_id', 'name', 'trait_names', 'quality_tier', 'method_class', 
+                          'n_evaluations', 'n_variants', 'efo_mapped', 'mondo_mapped', 'hp_mapped', 'grch38_available', 'first_author']
+            available_display = [c for c in display_cols if c in display_df.columns]
+            
+            display_df = display_df[available_display]
             
             if 'quality_tier' in display_df.columns:
                 tier_emoji = {'Gold': '🥇', 'Silver': '🥈', 'Bronze': '🥉', 'Unrated': '⚫'}
@@ -275,18 +303,26 @@ def render_kraken_estimator(df: pd.DataFrame):
     st.markdown("### Kraken Ingest Estimate")
     st.markdown("---")
     
+    st.markdown(f"**Scores matching filters:** {stats['total_scores']:,}")
+    
+    st.markdown("**Ontology mapping coverage:**")
     st.markdown(f"""
-**Scores matching filters:** {stats['total_scores']:,}
-- With EFO/MONDO mapping: **{stats['with_efo']:,}** (required for Kraken)
-- With harmonized files: **{stats['with_harmonized']:,}** (required for Kraken)
-- **Kraken-eligible:** **{stats['kraken_eligible']:,}**
+└─ EFO mapped: **{stats['efo_only']:,}**  
+└─ MONDO mapped: **{stats['mondo_only']:,}**  
+└─ HP mapped: **{stats['hp_only']:,}**  
+└─ Multiple ontologies: **{stats['multiple_ontologies']:,}**  
+└─ No mapping: **{stats['no_mapping']:,}** *(excluded from Kraken)*  
+└─ **Total mappable: {stats['total_mappable']:,}**
 """)
+    
+    st.markdown(f"- With harmonized files: **{stats['with_harmonized']:,}** (required for Kraken)")
+    st.markdown(f"- **Kraken-eligible:** **{stats['kraken_eligible']:,}**")
     
     st.markdown("---")
     st.markdown("**Estimated graph impact:**")
     st.markdown(f"""
 - PRS nodes: **{stats['kraken_eligible']:,}**
-- PRS → Disease edges: **{stats['kraken_eligible']:,}** (via EFO/MONDO)
+- PRS → Disease edges: **{stats['kraken_eligible']:,}** (via EFO/MONDO/HP)
 - PRS → Gene edges: **~{stats['estimated_gene_edges']:,}** (est. 50 genes per PRS)
 """)
     
@@ -345,10 +381,13 @@ def render_traits_tab():
     
     traits_df = data_source.get_traits()
     categories_df = data_source.get_trait_categories()
+    scores_df, _ = get_enriched_scores()
     
     if traits_df.empty:
         st.warning("No traits loaded. Please check your internet connection.")
         return
+    
+    trait_tier_stats = compute_trait_tier_stats(scores_df) if not scores_df.empty else {}
     
     col1, col2 = st.columns([1, 3])
     
@@ -362,12 +401,26 @@ def render_traits_tab():
         
         min_scores = st.number_input("Minimum scores", min_value=0, value=0)
         
+        st.write("**Best Quality Tier**")
+        tier_filter = st.multiselect(
+            "Filter by best tier",
+            options=['Gold', 'Silver', 'Bronze', 'Unrated'],
+            help="Filter traits by the best quality tier among their associated scores",
+            label_visibility="collapsed",
+            key="trait_tier_filter"
+        )
+        
         filtered_traits = filter_traits(
             traits_df,
             search_query=search if search else None,
             category=selected_category if selected_category != 'All' else None,
             min_scores=min_scores if min_scores > 0 else None
         )
+        
+        if trait_tier_stats and tier_filter:
+            filtered_traits = filtered_traits[filtered_traits['trait_id'].apply(
+                lambda x: trait_tier_stats.get(x, {}).get('best_tier', 'Unrated') in tier_filter
+            )]
     
     with col2:
         st.metric("Traits Found", len(filtered_traits))
@@ -393,11 +446,21 @@ def render_traits_tab():
             fig.update_layout(height=400, yaxis={'categoryorder': 'total ascending'})
             st.plotly_chart(fig, use_container_width=True)
             
-            display_cols = ['trait_id', 'label', 'n_scores', 'categories', 'description']
-            available_display = [c for c in display_cols if c in filtered_traits.columns]
+            display_df = filtered_traits.head(100).copy()
+            if trait_tier_stats:
+                tier_emoji = {'Gold': '🥇', 'Silver': '🥈', 'Bronze': '🥉', 'Unrated': '⚫'}
+                display_df['best_tier'] = display_df['trait_id'].apply(
+                    lambda x: f"{tier_emoji.get(trait_tier_stats.get(x, {}).get('best_tier', 'Unrated'), '')} {trait_tier_stats.get(x, {}).get('best_tier', 'Unrated')}"
+                )
+                display_df['tier_breakdown'] = display_df['trait_id'].apply(
+                    lambda x: trait_tier_stats.get(x, {}).get('breakdown', '')
+                )
+            
+            display_cols = ['trait_id', 'label', 'n_scores', 'best_tier', 'tier_breakdown', 'categories']
+            available_display = [c for c in display_cols if c in display_df.columns]
             
             st.dataframe(
-                filtered_traits[available_display].head(100),
+                display_df[available_display],
                 use_container_width=True,
                 hide_index=True
             )
@@ -418,10 +481,13 @@ def render_publications_tab():
     st.header("Publications Browser")
     
     publications_df = data_source.get_publications()
+    scores_df, _ = get_enriched_scores()
     
     if publications_df.empty:
         st.warning("No publications loaded. Please check your internet connection.")
         return
+    
+    pub_tier_stats = compute_publication_tier_stats(scores_df) if not scores_df.empty else {}
     
     col1, col2 = st.columns([1, 3])
     
@@ -437,6 +503,15 @@ def render_publications_tab():
         has_dev = st.checkbox("Has PGS development")
         has_eval = st.checkbox("Has PGS evaluation")
         
+        st.write("**Best Quality Tier**")
+        tier_filter = st.multiselect(
+            "Filter by best tier",
+            options=['Gold', 'Silver', 'Bronze', 'Unrated'],
+            help="Filter publications by the best quality tier among their scores",
+            label_visibility="collapsed",
+            key="pub_tier_filter"
+        )
+        
         filtered_pubs = filter_publications(
             publications_df,
             search_query=search if search else None,
@@ -444,6 +519,11 @@ def render_publications_tab():
             has_development=has_dev,
             has_evaluation=has_eval
         )
+        
+        if pub_tier_stats and tier_filter:
+            filtered_pubs = filtered_pubs[filtered_pubs['pgp_id'].apply(
+                lambda x: pub_tier_stats.get(x, {}).get('best_tier', 'Unrated') in tier_filter
+            )]
     
     with col2:
         st.metric("Publications Found", len(filtered_pubs))
@@ -470,12 +550,25 @@ def render_publications_tab():
             fig.update_layout(height=300)
             st.plotly_chart(fig, use_container_width=True)
             
-            display_cols = ['pgp_id', 'first_author', 'title', 'journal', 
+            display_df = filtered_pubs.head(100).copy()
+            if pub_tier_stats:
+                tier_emoji = {'Gold': '🥇', 'Silver': '🥈', 'Bronze': '🥉', 'Unrated': '⚫'}
+                display_df['best_tier'] = display_df['pgp_id'].apply(
+                    lambda x: f"{tier_emoji.get(pub_tier_stats.get(x, {}).get('best_tier', 'Unrated'), '')} {pub_tier_stats.get(x, {}).get('best_tier', 'Unrated')}"
+                )
+            
+            if 'doi' in display_df.columns:
+                display_df['title_link'] = display_df.apply(
+                    lambda row: f"[{row.get('title', 'N/A')}](https://doi.org/{row['doi']})" if row.get('doi') else row.get('title', 'N/A'),
+                    axis=1
+                )
+            
+            display_cols = ['pgp_id', 'first_author', 'title_link', 'best_tier', 'journal', 
                           'date_publication', 'n_development', 'n_evaluation']
-            available_display = [c for c in display_cols if c in filtered_pubs.columns]
+            available_display = [c for c in display_cols if c in display_df.columns]
             
             st.dataframe(
-                filtered_pubs[available_display].head(100),
+                display_df[available_display],
                 use_container_width=True,
                 hide_index=True
             )
@@ -487,7 +580,7 @@ def render_performance_tab():
     st.info("Performance metrics show how well a PGS predicts the trait in different populations. "
             "Context matters: ancestry and sample size significantly affect metric interpretation.")
     
-    scores_df = data_source.get_scores()
+    scores_df, _ = get_enriched_scores()
     
     if scores_df.empty:
         st.warning("Load scores first to search for performance metrics.")
@@ -507,8 +600,16 @@ def render_performance_tab():
             st.warning(f"No performance metrics found for {pgs_id}")
             return
         
+        score_info = scores_df[scores_df['pgs_id'] == pgs_id]
+        quality_tier = score_info['quality_tier'].iloc[0] if not score_info.empty and 'quality_tier' in score_info.columns else 'Unknown'
+        tier_emoji = {'Gold': '🥇', 'Silver': '🥈', 'Bronze': '🥉', 'Unrated': '⚫', 'Unknown': '❓'}
+        
         st.subheader(f"Performance Metrics for {pgs_id}")
-        st.metric("Number of Evaluations", len(metrics_df))
+        metric_cols = st.columns(2)
+        with metric_cols[0]:
+            st.metric("Number of Evaluations", len(metrics_df))
+        with metric_cols[1]:
+            st.metric("Quality Tier", f"{tier_emoji.get(quality_tier, '')} {quality_tier}")
         
         if 'ancestry' in metrics_df.columns:
             ancestry_counts = metrics_df['ancestry'].str.split('; ').explode().value_counts()

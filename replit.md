@@ -1,7 +1,7 @@
 # PGS Catalog Explorer
 
 ## Overview
-A Streamlit web application for exploring the Polygenic Score (PGS) Catalog database. Allows researchers to browse, filter, and analyze polygenic scores, traits, publications, and performance metrics with ancestry context. Includes quality tier classification and Kraken ingest estimation for graph database planning.
+A Streamlit web application for exploring the Polygenic Score (PGS) Catalog database. Allows researchers to browse, filter, and analyze polygenic scores, traits, publications, and performance metrics with ancestry context. Includes quality tier classification, ontology mapping breakdown (EFO/MONDO/HP), and Kraken knowledge graph ingest estimation for research planning.
 
 ## Project Architecture
 
@@ -27,18 +27,20 @@ A Streamlit web application for exploring the Polygenic Score (PGS) Catalog data
 **utils.py**
 - Method classification (LD-aware vs C+T approaches)
 - Quality tier computation (Gold/Silver/Bronze/Unrated)
-- Filtering functions for scores, traits, publications (with quality tier support)
-- Kraken ingest statistics computation
+- Trait and publication tier statistics aggregation
+- Filtering functions for scores, traits, publications (with quality tier + ontology support)
+- Kraken ingest statistics computation with ontology breakdown
 - CSV export utilities (standard and Kraken ingest plan)
 - Color schemes for visualizations
 
 **app.py**
 - Main Streamlit UI with 4 tabs: Scores, Traits, Publications, Performance
 - Preset filter buttons: ARK-Ready, Kraken-Ready, All High-Quality
-- Quality tier filtering and distribution visualization
-- Kraken Ingest Estimator panel with graph impact estimates
+- Ontology mapping filter: EFO only, MONDO only, HP only, Multiple, No mapping
+- Quality tier filtering and distribution visualization in all tabs
+- Kraken Ingest Estimator panel with ontology breakdown and graph impact estimates
+- Clickable DOI links for publications
 - Sidebar with quality tier info, method classification, and ancestry categories
-- Interactive filtering and data exploration
 
 ### Data Flow
 ```
@@ -70,19 +72,27 @@ Uses case-insensitive matching on method_name field.
 - **Bronze**: Moderate (C+T) method + ≥1 evaluation
 - **Unrated**: Missing evaluations or Other/Unknown method
 
+### Ontology Mapping
+The PGS Catalog's `trait_efo` field contains trait IDs with various prefixes:
+- **EFO_**: Experimental Factor Ontology (primary mapping)
+- **MONDO_**: Mondo Disease Ontology
+- **HP_**: Human Phenotype Ontology
+
+Kraken-eligible requires any one of EFO, MONDO, or HP mapping (not all required).
+
 ### Preset Filters
-- **ARK-Ready**: Gold tier + EFO mapping + GRCh38 available
-- **Kraken-Ready**: Any rated tier (Gold/Silver/Bronze) + EFO mapping + harmonized files
+- **ARK-Ready**: Gold tier + any ontology mapping + GRCh38 available
+- **Kraken-Ready**: Any rated tier (Gold/Silver/Bronze) + any ontology mapping + harmonized files
 - **All High-Quality**: Gold + Silver tiers
 
 ### Kraken-Eligible Criteria
 A score is Kraken-eligible if ALL of:
-1. Has EFO/MONDO mapping (hard requirement)
+1. Has any ontology mapping (EFO, MONDO, or HP)
 2. Has harmonized file (GRCh37 or GRCh38)
 3. Quality tier is Gold, Silver, or Bronze (excludes Unrated)
 
 ### Kraken Ingest CSV Columns
-pgs_id, name, trait_efo, trait_reported, method_name, method_class, quality_tier, n_variants, n_evaluations, ancestry_dev, ancestry_eval, grch37_available, grch38_available, publication_doi
+pgs_id, name, trait_efo, trait_reported, method_name, method_class, quality_tier, n_variants, n_evaluations, ancestry_dev, ancestry_eval, efo_mapped, mondo_mapped, hp_mapped, grch37_available, grch38_available, publication_doi
 
 ### Production Upgrade Path
 See README.md for DuckDB backend implementation using bulk metadata dumps from:
@@ -100,3 +110,5 @@ streamlit run app.py --server.port 5000
 - Method classification distinguishing LD-aware from simpler approaches
 - Quality tier system for score assessment (ARK/Kraken readiness)
 - Kraken ingest estimation for graph database planning
+- Ontology mapping breakdown (EFO/MONDO/HP) to assess cross-mapping needs
+- Clickable DOI links for publication references

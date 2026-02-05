@@ -116,10 +116,10 @@ def filter_publications(
 def export_scores_csv(df: pd.DataFrame) -> str:
     """Export filtered scores to CSV string with key columns."""
     export_cols = [
-        'pgs_id', 'name', 'trait_names', 'method_name', 'method_class',
-        'n_variants', 'has_efo_mapping', 'grch37_available', 'grch38_available',
-        'dev_ancestry', 'eval_ancestry', 'first_author', 'publication_date',
-        'ftp_scoring_file', 'grch37_url', 'grch38_url'
+        'pgs_id', 'name', 'trait_names', 'method_name', 'method_class', 'quality_tier',
+        'n_variants', 'n_evaluations', 'has_efo', 'has_mondo', 'has_hp', 'has_any_ontology',
+        'grch37_available', 'grch38_available', 'dev_ancestry', 'eval_ancestry', 
+        'first_author', 'publication_date', 'ftp_scoring_file', 'grch37_url', 'grch38_url'
     ]
     
     available_cols = [c for c in export_cols if c in df.columns]
@@ -277,18 +277,101 @@ def get_quality_tier_colors() -> dict:
     }
 
 
+def compute_trait_tier_stats(scores_df: pd.DataFrame) -> dict:
+    """Compute quality tier statistics per trait.
+    
+    Returns dict mapping trait_id to {best_tier, breakdown, counts}.
+    """
+    if scores_df.empty or 'trait_ids' not in scores_df.columns or 'quality_tier' not in scores_df.columns:
+        return {}
+    
+    tier_order = {'Gold': 1, 'Silver': 2, 'Bronze': 3, 'Unrated': 4}
+    result = {}
+    
+    for _, row in scores_df.iterrows():
+        trait_ids_str = row.get('trait_ids', '')
+        if not trait_ids_str:
+            continue
+        
+        trait_ids = [t.strip() for t in trait_ids_str.split(';') if t.strip()]
+        tier = row.get('quality_tier', 'Unrated')
+        
+        for trait_id in trait_ids:
+            if trait_id not in result:
+                result[trait_id] = {'counts': {'Gold': 0, 'Silver': 0, 'Bronze': 0, 'Unrated': 0}}
+            result[trait_id]['counts'][tier] = result[trait_id]['counts'].get(tier, 0) + 1
+    
+    for trait_id, data in result.items():
+        counts = data['counts']
+        best_tier = 'Unrated'
+        for tier in ['Gold', 'Silver', 'Bronze', 'Unrated']:
+            if counts.get(tier, 0) > 0:
+                best_tier = tier
+                break
+        data['best_tier'] = best_tier
+        
+        parts = []
+        for tier in ['Gold', 'Silver', 'Bronze', 'Unrated']:
+            if counts.get(tier, 0) > 0:
+                parts.append(f"{counts[tier]} {tier}")
+        data['breakdown'] = ', '.join(parts)
+    
+    return result
+
+
+def compute_publication_tier_stats(scores_df: pd.DataFrame) -> dict:
+    """Compute quality tier statistics per publication.
+    
+    Returns dict mapping pgp_id to {best_tier, counts}.
+    """
+    if scores_df.empty or 'pgp_id' not in scores_df.columns or 'quality_tier' not in scores_df.columns:
+        return {}
+    
+    result = {}
+    
+    for _, row in scores_df.iterrows():
+        pgp_id = row.get('pgp_id', '')
+        if not pgp_id:
+            continue
+        
+        tier = row.get('quality_tier', 'Unrated')
+        
+        if pgp_id not in result:
+            result[pgp_id] = {'counts': {'Gold': 0, 'Silver': 0, 'Bronze': 0, 'Unrated': 0}}
+        result[pgp_id]['counts'][tier] = result[pgp_id]['counts'].get(tier, 0) + 1
+    
+    for pgp_id, data in result.items():
+        counts = data['counts']
+        best_tier = 'Unrated'
+        for tier in ['Gold', 'Silver', 'Bronze', 'Unrated']:
+            if counts.get(tier, 0) > 0:
+                best_tier = tier
+                break
+        data['best_tier'] = best_tier
+    
+    return result
+
+
 def filter_scores(
     df: pd.DataFrame,
     search_query: Optional[str] = None,
     method_classes: Optional[list] = None,
     quality_tiers: Optional[list] = None,
-    has_efo_only: bool = False,
+    ontology_filters: Optional[list] = None,
     has_grch37: bool = False,
     has_grch38: bool = False,
     min_variants: Optional[int] = None,
     max_variants: Optional[int] = None,
 ) -> pd.DataFrame:
-    """Apply filters to scores dataframe."""
+    """Apply filters to scores dataframe.
+    
+    ontology_filters: List of ontology filter options:
+        - 'EFO only': Has EFO but not MONDO or HP
+        - 'MONDO only': Has MONDO but not EFO or HP
+        - 'HP only': Has HP but not EFO or MONDO
+        - 'Multiple': Has more than one ontology type
+        - 'No mapping': Has no ontology mappings
+    """
     if df.empty:
         return df
     
@@ -311,8 +394,23 @@ def filter_scores(
     if quality_tiers and 'quality_tier' in filtered.columns:
         filtered = filtered[filtered['quality_tier'].isin(quality_tiers)]
     
-    if has_efo_only:
-        filtered = filtered[filtered['has_efo_mapping'] == True]
+    if ontology_filters and 'has_efo' in filtered.columns:
+        ontology_mask = pd.Series([False] * len(filtered), index=filtered.index)
+        
+        for ont_filter in ontology_filters:
+            if ont_filter == 'EFO only':
+                ontology_mask |= (filtered['has_efo'] & ~filtered['has_mondo'] & ~filtered['has_hp'])
+            elif ont_filter == 'MONDO only':
+                ontology_mask |= (~filtered['has_efo'] & filtered['has_mondo'] & ~filtered['has_hp'])
+            elif ont_filter == 'HP only':
+                ontology_mask |= (~filtered['has_efo'] & ~filtered['has_mondo'] & filtered['has_hp'])
+            elif ont_filter == 'Multiple':
+                count = filtered['has_efo'].astype(int) + filtered['has_mondo'].astype(int) + filtered['has_hp'].astype(int)
+                ontology_mask |= (count >= 2)
+            elif ont_filter == 'No mapping':
+                ontology_mask |= (~filtered['has_efo'] & ~filtered['has_mondo'] & ~filtered['has_hp'])
+        
+        filtered = filtered[ontology_mask]
     
     if has_grch37:
         filtered = filtered[filtered['grch37_available'] == True]
@@ -332,20 +430,18 @@ def filter_scores(
 def compute_kraken_stats(df: pd.DataFrame) -> dict:
     """Compute Kraken ingest statistics from filtered scores.
     
-    Returns dict with:
-    - total_scores: Total scores matching filters
-    - with_efo: Scores with EFO/MONDO mapping
-    - with_harmonized: Scores with harmonized files
-    - kraken_eligible: Scores meeting all hard requirements + quality tier
-    - total_variants: Sum of n_variants
-    - avg_variants: Average variants per score
-    - max_variants: Max variants in any score
-    - estimated_gene_edges: Estimated gene edges (50 genes per PRS)
+    Returns dict with ontology breakdown, harmonized files, and variant stats.
+    Kraken-eligible = has any ontology (EFO/MONDO/HP) + harmonized files + rated tier.
     """
     if df.empty:
         return {
             'total_scores': 0,
-            'with_efo': 0,
+            'efo_only': 0,
+            'mondo_only': 0,
+            'hp_only': 0,
+            'multiple_ontologies': 0,
+            'no_mapping': 0,
+            'total_mappable': 0,
             'with_harmonized': 0,
             'kraken_eligible': 0,
             'total_variants': 0,
@@ -355,11 +451,25 @@ def compute_kraken_stats(df: pd.DataFrame) -> dict:
         }
     
     total = len(df)
-    with_efo = len(df[df['has_efo_mapping'] == True])
+    
+    has_efo = df.get('has_efo', pd.Series([False] * total))
+    has_mondo = df.get('has_mondo', pd.Series([False] * total))
+    has_hp = df.get('has_hp', pd.Series([False] * total))
+    has_any = df.get('has_any_ontology', has_efo | has_mondo | has_hp)
+    
+    ontology_count = has_efo.astype(int) + has_mondo.astype(int) + has_hp.astype(int)
+    
+    efo_only = len(df[has_efo & ~has_mondo & ~has_hp])
+    mondo_only = len(df[~has_efo & has_mondo & ~has_hp])
+    hp_only = len(df[~has_efo & ~has_mondo & has_hp])
+    multiple_ontologies = len(df[ontology_count >= 2])
+    no_mapping = len(df[~has_any])
+    total_mappable = len(df[has_any])
+    
     with_harmonized = len(df[(df['grch37_available'] == True) | (df['grch38_available'] == True)])
     
     eligible_mask = (
-        (df['has_efo_mapping'] == True) &
+        has_any &
         ((df['grch37_available'] == True) | (df['grch38_available'] == True))
     )
     if 'quality_tier' in df.columns:
@@ -375,7 +485,12 @@ def compute_kraken_stats(df: pd.DataFrame) -> dict:
     
     return {
         'total_scores': total,
-        'with_efo': with_efo,
+        'efo_only': efo_only,
+        'mondo_only': mondo_only,
+        'hp_only': hp_only,
+        'multiple_ontologies': multiple_ontologies,
+        'no_mapping': no_mapping,
+        'total_mappable': total_mappable,
         'with_harmonized': with_harmonized,
         'kraken_eligible': kraken_eligible,
         'total_variants': total_variants,
@@ -390,7 +505,7 @@ def export_kraken_ingest_csv(df: pd.DataFrame) -> str:
     export_cols = [
         'pgs_id', 'name', 'trait_ids', 'trait_names', 'method_name', 'method_class',
         'quality_tier', 'n_variants', 'n_evaluations', 'dev_ancestry', 'eval_ancestry',
-        'grch37_available', 'grch38_available', 'doi'
+        'has_efo', 'has_mondo', 'has_hp', 'grch37_available', 'grch38_available', 'doi'
     ]
     
     available_cols = [c for c in export_cols if c in df.columns]
@@ -401,6 +516,9 @@ def export_kraken_ingest_csv(df: pd.DataFrame) -> str:
         'trait_names': 'trait_reported',
         'dev_ancestry': 'ancestry_dev',
         'eval_ancestry': 'ancestry_eval',
+        'has_efo': 'efo_mapped',
+        'has_mondo': 'mondo_mapped',
+        'has_hp': 'hp_mapped',
         'doi': 'publication_doi'
     })
     

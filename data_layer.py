@@ -142,13 +142,20 @@ class APIDataSource(PGSDataSource):
         for score in scores:
             trait_names = []
             trait_ids = []
-            has_efo_mapping = False
+            has_efo = False
+            has_mondo = False
+            has_hp = False
             
             for trait in score.get('trait_efo', []):
                 trait_names.append(trait.get('label', ''))
-                trait_ids.append(trait.get('id', ''))
-                if trait.get('id', '').startswith(('EFO_', 'MONDO_')):
-                    has_efo_mapping = True
+                trait_id = trait.get('id', '')
+                trait_ids.append(trait_id)
+                if trait_id.startswith('EFO_'):
+                    has_efo = True
+                elif trait_id.startswith('MONDO_'):
+                    has_mondo = True
+                elif trait_id.startswith('HP_'):
+                    has_hp = True
             
             harmonized = score.get('ftp_harmonized_scoring_files', {})
             grch37_available = bool(harmonized.get('GRCh37', {}).get('positions'))
@@ -166,12 +173,17 @@ class APIDataSource(PGSDataSource):
             
             pub = score.get('publication', {})
             
+            has_any_ontology = has_efo or has_mondo or has_hp
+            
             rows.append({
                 'pgs_id': score.get('id', ''),
                 'name': score.get('name', ''),
                 'trait_names': '; '.join(trait_names),
                 'trait_ids': '; '.join(trait_ids),
-                'has_efo_mapping': has_efo_mapping,
+                'has_efo': has_efo,
+                'has_mondo': has_mondo,
+                'has_hp': has_hp,
+                'has_any_ontology': has_any_ontology,
                 'method_name': score.get('method_name', ''),
                 'method_params': score.get('method_params', ''),
                 'n_variants': score.get('variants_number', 0),
