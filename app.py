@@ -4,9 +4,10 @@ import plotly.express as px
 import plotly.graph_objects as go
 from data_layer import get_data_source
 from utils import (
-    add_method_classification, filter_scores, filter_traits, filter_publications,
-    export_scores_csv, export_traits_csv, export_publications_csv,
-    get_method_class_colors, get_ancestry_colors, classify_method
+    add_method_classification, add_quality_tiers, filter_scores, filter_traits, filter_publications,
+    export_scores_csv, export_traits_csv, export_publications_csv, export_kraken_ingest_csv,
+    get_method_class_colors, get_ancestry_colors, get_quality_tier_colors, 
+    classify_method, compute_kraken_stats
 )
 
 st.set_page_config(
@@ -69,12 +70,55 @@ def render_scores_tab():
     st.header("Polygenic Scores Browser")
     
     scores_df = data_source.get_scores()
+    eval_summary_df = data_source.get_evaluation_summary()
     
     if scores_df.empty:
         st.warning("No scores loaded. Please check your internet connection.")
         return
     
     scores_df = add_method_classification(scores_df)
+    scores_df = add_quality_tiers(scores_df, eval_summary_df)
+    
+    if not eval_summary_df.empty:
+        eval_coverage = len(eval_summary_df)
+        if eval_coverage < len(scores_df) * 0.5:
+            st.info(f"Quality tier data based on {eval_coverage:,} scores with evaluations. Tiers shown may be partial.")
+    
+    preset_col1, preset_col2, preset_col3, preset_col4 = st.columns(4)
+    
+    if 'preset_filter' not in st.session_state:
+        st.session_state.preset_filter = None
+    
+    with preset_col1:
+        if st.button("ARK-Ready", help="Gold tier + EFO mapping + GRCh38"):
+            st.session_state.preset_filter = 'ark'
+    with preset_col2:
+        if st.button("Kraken-Ready", help="Silver+ tier + EFO mapping + harmonized files"):
+            st.session_state.preset_filter = 'kraken'
+    with preset_col3:
+        if st.button("All High-Quality", help="Gold + Silver tiers"):
+            st.session_state.preset_filter = 'high_quality'
+    with preset_col4:
+        if st.button("Clear Presets"):
+            st.session_state.preset_filter = None
+    
+    preset = st.session_state.preset_filter
+    default_tiers = []
+    default_efo = False
+    default_grch38 = False
+    default_grch37 = False
+    
+    if preset == 'ark':
+        default_tiers = ['Gold']
+        default_efo = True
+        default_grch38 = True
+    elif preset == 'kraken':
+        default_tiers = ['Gold', 'Silver', 'Bronze']
+        default_efo = True
+        default_grch37 = True
+        default_grch38 = True
+    elif preset == 'high_quality':
+        default_tiers = ['Gold', 'Silver']
     
     col1, col2 = st.columns([1, 3])
     
@@ -83,30 +127,41 @@ def render_scores_tab():
         
         search = st.text_input("Search", placeholder="PGS ID, trait, author...")
         
+        st.write("**Quality Tier**")
+        quality_tiers = st.multiselect(
+            "Select tiers",
+            options=['Gold', 'Silver', 'Bronze', 'Unrated'],
+            default=default_tiers if default_tiers else None,
+            help="Gold: LD-aware + 2+ evals + multi-ancestry. Silver: LD-aware + eval. Bronze: Has eval. Unrated: No evals.",
+            label_visibility="collapsed"
+        )
+        
         method_classes = st.multiselect(
             "Method Classification",
             options=['High (LD-aware)', 'Moderate (C+T)', 'Other', 'Unknown'],
             help="High: PRS-CS, LDpred2, lassosum, etc. Moderate: C+T, PRSice, etc."
         )
         
-        has_efo = st.checkbox("Has EFO/MONDO mapping only", help="Filter to scores with ontology mappings")
+        has_efo = st.checkbox("Has EFO/MONDO mapping only", value=default_efo, help="Filter to scores with ontology mappings")
         
         st.write("**Harmonized Files**")
-        has_grch37 = st.checkbox("GRCh37 available")
-        has_grch38 = st.checkbox("GRCh38 available")
+        has_grch37 = st.checkbox("GRCh37 available", value=default_grch37)
+        has_grch38 = st.checkbox("GRCh38 available", value=default_grch38)
         
         st.write("**Variant Count**")
+        max_variants_val = int(scores_df['n_variants'].max()) if scores_df['n_variants'].max() > 0 else 1000000
         min_var, max_var = st.slider(
             "Range",
             min_value=0,
-            max_value=int(scores_df['n_variants'].max()) if scores_df['n_variants'].max() > 0 else 1000000,
-            value=(0, int(scores_df['n_variants'].max()) if scores_df['n_variants'].max() > 0 else 1000000)
+            max_value=max_variants_val,
+            value=(0, max_variants_val)
         )
         
         filtered_df = filter_scores(
             scores_df,
             search_query=search if search else None,
             method_classes=method_classes if method_classes else None,
+            quality_tiers=quality_tiers if quality_tiers else None,
             has_efo_only=has_efo,
             has_grch37=has_grch37,
             has_grch38=has_grch38,
@@ -115,40 +170,92 @@ def render_scores_tab():
         )
     
     with col2:
-        st.metric("Total Scores", len(filtered_df))
+        metric_cols = st.columns(4)
+        with metric_cols[0]:
+            st.metric("Total Scores", len(filtered_df))
+        with metric_cols[1]:
+            gold_count = len(filtered_df[filtered_df['quality_tier'] == 'Gold']) if 'quality_tier' in filtered_df.columns else 0
+            st.metric("Gold Tier", gold_count)
+        with metric_cols[2]:
+            silver_count = len(filtered_df[filtered_df['quality_tier'] == 'Silver']) if 'quality_tier' in filtered_df.columns else 0
+            st.metric("Silver Tier", silver_count)
+        with metric_cols[3]:
+            kraken_stats = compute_kraken_stats(filtered_df)
+            st.metric("Kraken-Eligible", kraken_stats['kraken_eligible'])
         
         if not filtered_df.empty:
-            csv_data = export_scores_csv(filtered_df)
-            st.download_button(
-                label="Download Filtered Results (CSV)",
-                data=csv_data,
-                file_name="pgs_catalog_scores.csv",
-                mime="text/csv"
-            )
+            download_col1, download_col2 = st.columns(2)
+            with download_col1:
+                csv_data = export_scores_csv(filtered_df)
+                st.download_button(
+                    label="Download Filtered Results (CSV)",
+                    data=csv_data,
+                    file_name="pgs_catalog_scores.csv",
+                    mime="text/csv"
+                )
+            with download_col2:
+                kraken_csv = export_kraken_ingest_csv(filtered_df)
+                st.download_button(
+                    label="Download Kraken Ingest Plan (CSV)",
+                    data=kraken_csv,
+                    file_name="kraken_ingest_plan.csv",
+                    mime="text/csv"
+                )
             
-            method_counts = filtered_df['method_class'].value_counts()
-            fig = px.pie(
-                values=method_counts.values,
-                names=method_counts.index,
-                title="Method Classification Distribution",
-                color=method_counts.index,
-                color_discrete_map=get_method_class_colors()
-            )
-            fig.update_layout(height=300)
-            st.plotly_chart(fig, use_container_width=True)
+            chart_col1, chart_col2 = st.columns(2)
             
-            display_cols = ['pgs_id', 'name', 'trait_names', 'method_class', 'n_variants', 
-                          'has_efo_mapping', 'grch37_available', 'grch38_available', 'first_author']
+            with chart_col1:
+                method_counts = filtered_df['method_class'].value_counts()
+                fig = px.pie(
+                    values=method_counts.values,
+                    names=method_counts.index,
+                    title="Method Classification Distribution",
+                    color=method_counts.index,
+                    color_discrete_map=get_method_class_colors()
+                )
+                fig.update_layout(height=300)
+                st.plotly_chart(fig, use_container_width=True)
+            
+            with chart_col2:
+                if 'quality_tier' in filtered_df.columns:
+                    tier_order = ['Gold', 'Silver', 'Bronze', 'Unrated']
+                    tier_counts = filtered_df['quality_tier'].value_counts()
+                    tier_counts = tier_counts.reindex(tier_order).dropna()
+                    fig = px.pie(
+                        values=tier_counts.values,
+                        names=tier_counts.index,
+                        title="Quality Tier Distribution (All Filtered Scores)",
+                        color=tier_counts.index,
+                        color_discrete_map=get_quality_tier_colors()
+                    )
+                    fig.update_layout(height=300)
+                    st.plotly_chart(fig, use_container_width=True)
+            
+            st.caption("Charts reflect ALL scores matching current filters, not just the displayed 100 rows.")
+            
+            display_cols = ['pgs_id', 'name', 'trait_names', 'quality_tier', 'method_class', 
+                          'n_evaluations', 'n_variants', 'has_efo_mapping', 'grch38_available', 'first_author']
             available_display = [c for c in display_cols if c in filtered_df.columns]
             
+            display_df = filtered_df[available_display].head(100).copy()
+            
+            if 'quality_tier' in display_df.columns:
+                tier_emoji = {'Gold': '🥇', 'Silver': '🥈', 'Bronze': '🥉', 'Unrated': '⚫'}
+                display_df['quality_tier'] = display_df['quality_tier'].apply(
+                    lambda x: f"{tier_emoji.get(x, '')} {x}"
+                )
+            
             st.dataframe(
-                filtered_df[available_display].head(100),
+                display_df,
                 use_container_width=True,
                 hide_index=True
             )
             
             if len(filtered_df) > 100:
                 st.info(f"Showing first 100 of {len(filtered_df)} scores. Use filters to narrow down.")
+            
+            with st.expander("Kraken Ingest Estimator"):
+                render_kraken_estimator(filtered_df)
             
             with st.expander("Score Details"):
                 selected_pgs = st.selectbox(
@@ -159,6 +266,41 @@ def render_scores_tab():
                 
                 if selected_pgs:
                     render_score_details(selected_pgs, filtered_df)
+
+
+def render_kraken_estimator(df: pd.DataFrame):
+    """Render Kraken Ingest Estimator panel."""
+    stats = compute_kraken_stats(df)
+    
+    st.markdown("### Kraken Ingest Estimate")
+    st.markdown("---")
+    
+    st.markdown(f"""
+**Scores matching filters:** {stats['total_scores']:,}
+- With EFO/MONDO mapping: **{stats['with_efo']:,}** (required for Kraken)
+- With harmonized files: **{stats['with_harmonized']:,}** (required for Kraken)
+- **Kraken-eligible:** **{stats['kraken_eligible']:,}**
+""")
+    
+    st.markdown("---")
+    st.markdown("**Estimated graph impact:**")
+    st.markdown(f"""
+- PRS nodes: **{stats['kraken_eligible']:,}**
+- PRS → Disease edges: **{stats['kraken_eligible']:,}** (via EFO/MONDO)
+- PRS → Gene edges: **~{stats['estimated_gene_edges']:,}** (est. 50 genes per PRS)
+""")
+    
+    st.markdown("---")
+    st.markdown("**Variant summary:**")
+    st.markdown(f"""
+- Total variants: **~{stats['total_variants']:,}** (across all scores)
+- Avg variants/score: **{stats['avg_variants']:,}**
+- Max variants: **{stats['max_variants']:,}**
+""")
+    
+    if stats['total_variants'] > 1000000:
+        estimated_variant_edges = stats['total_variants']
+        st.warning(f"If we stored all variants: ~{estimated_variant_edges:,} edges (this is why we aggregate to genes instead)")
 
 
 def render_score_details(pgs_id: str, scores_df: pd.DataFrame):
@@ -415,6 +557,8 @@ def render_sidebar_info():
     
     **Features:**
     - Browse and filter scores by method, ancestry, traits
+    - Quality tier classification for score assessment
+    - Kraken ingest estimation for graph planning
     - Explore trait categories and ontologies
     - View publication history
     - Analyze performance metrics with ancestry context
@@ -426,6 +570,23 @@ def render_sidebar_info():
     - [PGS Catalog](https://www.pgscatalog.org/)
     - [API Documentation](https://www.pgscatalog.org/rest/)
     - [pgscatalog-utils](https://pypi.org/project/pgscatalog-utils/)
+    """)
+    
+    st.divider()
+    
+    st.header("Quality Tiers")
+    st.markdown("""
+    **🥇 Gold (ARK-ready):**  
+    LD-aware method + 2+ evaluations + multi-ancestry (2+ groups)
+    
+    **🥈 Silver (Research-grade):**  
+    LD-aware method + at least 1 evaluation
+    
+    **🥉 Bronze:**  
+    Moderate (C+T) method + at least 1 evaluation
+    
+    **⚫ Unrated:**  
+    Missing evaluations or Other/Unknown method
     """)
     
     st.divider()

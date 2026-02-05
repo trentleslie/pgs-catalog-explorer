@@ -55,6 +55,11 @@ class PGSDataSource(ABC):
     def get_ancestry_categories(self) -> dict:
         """Get ancestry category definitions."""
         pass
+    
+    @abstractmethod
+    def get_evaluation_summary(self, max_pages: int = 20) -> pd.DataFrame:
+        """Get summary of evaluations per score (count and ancestry coverage)."""
+        pass
 
 
 class APIDataSource(PGSDataSource):
@@ -261,9 +266,9 @@ class APIDataSource(PGSDataSource):
         
         rows = []
         for pub in publications:
-            associated = pub.get('associated_pgs_ids', {})
-            dev_scores = associated.get('development', [])
-            eval_scores = associated.get('evaluation', [])
+            associated = pub.get('associated_pgs_ids', {}) or {}
+            dev_scores = [s for s in (associated.get('development', []) or []) if s]
+            eval_scores = [s for s in (associated.get('evaluation', []) or []) if s]
             
             rows.append({
                 'pgp_id': pub.get('id', ''),
@@ -345,6 +350,77 @@ class APIDataSource(PGSDataSource):
                 'effect_sizes': effect_sizes,
                 'class_acc': class_acc,
                 'other_metrics': other_metrics,
+            })
+        
+        return pd.DataFrame(rows)
+    
+    @st.cache_data(ttl=CACHE_TTL, show_spinner="Loading evaluation summary (this may take a moment)...")
+    def get_evaluation_summary(_self, max_pages: int = 20) -> pd.DataFrame:
+        """Get summary of evaluations per score (count and ancestry coverage).
+        
+        Args:
+            max_pages: Maximum pages to fetch (default 20, ~5000 metrics)
+        
+        Returns a DataFrame with:
+        - pgs_id: Score ID
+        - n_evaluations: Number of evaluations
+        - n_ancestry_groups: Number of unique ancestry groups evaluated
+        - ancestry_groups: Semicolon-separated list of ancestry groups
+        """
+        results = []
+        url = f"{_self.base_url}/performance/all"
+        params = {'limit': 250}
+        page_count = 0
+        
+        while url and page_count < max_pages:
+            try:
+                response = _self.session.get(url, params=params, timeout=60)
+                if response.status_code == 500:
+                    break
+                response.raise_for_status()
+                data = response.json()
+                
+                if isinstance(data, dict) and 'results' in data:
+                    results.extend(data['results'])
+                    url = data.get('next')
+                    params = {}
+                    page_count += 1
+                else:
+                    break
+            except Exception:
+                break
+        
+        if not results:
+            return pd.DataFrame()
+        
+        score_evals = {}
+        
+        for metric in results:
+            pgs_id = metric.get('associated_pgs_id', '')
+            if not pgs_id:
+                continue
+            
+            if pgs_id not in score_evals:
+                score_evals[pgs_id] = {
+                    'n_evaluations': 0,
+                    'ancestry_groups': set()
+                }
+            
+            score_evals[pgs_id]['n_evaluations'] += 1
+            
+            samples = metric.get('sampleset', {}).get('samples', [])
+            for sample in samples:
+                ancestry = sample.get('ancestry_broad', '')
+                if ancestry:
+                    score_evals[pgs_id]['ancestry_groups'].add(ancestry)
+        
+        rows = []
+        for pgs_id, data in score_evals.items():
+            rows.append({
+                'pgs_id': pgs_id,
+                'n_evaluations': data['n_evaluations'],
+                'n_ancestry_groups': len(data['ancestry_groups']),
+                'ancestry_groups': '; '.join(sorted(data['ancestry_groups']))
             })
         
         return pd.DataFrame(rows)
