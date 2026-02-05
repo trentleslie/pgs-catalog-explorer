@@ -553,6 +553,7 @@ class APIDataSource(PGSDataSource):
                 'pgp_id': pub.get('id', ''),
                 'first_author': pub.get('firstauthor', ''),
                 'publication_date': pub.get('date_publication', ''),
+                'doi': pub.get('doi', ''),
                 'phenotyping_reported': metric.get('phenotyping_reported', ''),
                 'covariates': metric.get('covariates', ''),
                 'sample_size': sample_size,
