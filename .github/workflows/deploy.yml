@@ -1,0 +1,25 @@
+name: Deploy to Lightsail
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Lightsail
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.LIGHTSAIL_HOST }}
+          username: ${{ secrets.LIGHTSAIL_USER }}
+          key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          script: |
+            cd ~/pgs-catalog-explorer
+            git pull origin main
+            source .venv/bin/activate
+            uv sync
+            sudo systemctl restart pgs-catalog-explorer
+            sleep 10
+            curl -s -o /dev/null -w "%{http_code}" http://localhost:8501 | grep -q "200" && echo "✅ App healthy" || echo "❌ App failed to start"
