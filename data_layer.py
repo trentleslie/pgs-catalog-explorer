@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 BASE_URL = "https://www.pgscatalog.org/rest"
 CACHE_TTL = timedelta(days=30)
 FORCE_REFRESH_DAYS = 30
+CACHE_VERSION = 2
 
 
 class PGSDataSource(ABC):
@@ -172,15 +173,14 @@ class APIDataSource(PGSDataSource):
         return is_fresh, api_scores, api_evals
     
     @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
-    def get_scores(_self, filters: Optional[dict] = None) -> pd.DataFrame:
+    def get_scores(_self, filters: Optional[dict] = None, _version=CACHE_VERSION) -> pd.DataFrame:
         """Get all scores with optional filtering."""
         params = {}
         if filters:
             if filters.get('pgs_ids'):
                 params['filter_ids'] = ','.join(filters['pgs_ids'])
         
-        callback = getattr(_self, '_progress_callback', None)
-        scores = _self._fetch_paginated('/score/all', params, progress_callback=callback)
+        scores = _self._fetch_paginated('/score/all', params)
         
         if not scores:
             return pd.DataFrame()
@@ -469,7 +469,7 @@ class APIDataSource(PGSDataSource):
         return pd.DataFrame(rows)
     
     @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
-    def get_evaluation_summary(_self) -> pd.DataFrame:
+    def get_evaluation_summary(_self, _version=CACHE_VERSION) -> pd.DataFrame:
         """Get summary of evaluations per score (count and ancestry coverage).
         
         Follows 'next' until null to get all evaluations.
@@ -480,8 +480,7 @@ class APIDataSource(PGSDataSource):
         - n_ancestry_groups: Number of unique ancestry groups evaluated
         - ancestry_groups: Semicolon-separated list of ancestry groups
         """
-        callback = getattr(_self, '_progress_callback', None)
-        results = _self._fetch_paginated('/performance/all', progress_callback=callback)
+        results = _self._fetch_paginated('/performance/all')
         
         if not results:
             return pd.DataFrame()

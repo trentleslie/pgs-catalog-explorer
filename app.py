@@ -47,9 +47,10 @@ data_source = get_data_source()
 from datetime import datetime
 
 CACHE_TTL_SECONDS = 30 * 24 * 60 * 60
+CACHE_VERSION = 2
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
-def get_enriched_scores_cached():
+def get_enriched_scores_cached(_version=CACHE_VERSION):
     """Get scores dataframe enriched with method classification and quality tiers."""
     scores_df = data_source.get_scores()
     eval_summary_df = data_source.get_evaluation_summary()
@@ -108,16 +109,14 @@ def load_data_with_smart_cache():
     elif cached_scores == 0:
         status_container.markdown("**Loading PGS Catalog data...** This may take a few minutes on first load.")
     
-    data_source._progress_callback = None
-    
     scores_df, eval_summary_df, load_timestamp = get_enriched_scores_cached()
     
     if not scores_df.empty:
         st.session_state.cache_metadata = {
-            'scores_count': len(scores_df),
-            'evals_count': len(eval_summary_df) if not eval_summary_df.empty else 0,
-            'api_scores_count': api_scores if api_scores > 0 else len(scores_df),
-            'api_evals_count': api_evals if api_evals > 0 else (len(eval_summary_df) if not eval_summary_df.empty else 0),
+            'scores_count': api_scores if api_scores > 0 else len(scores_df),
+            'evals_count': api_evals if api_evals > 0 else 0,
+            'scores_loaded': len(scores_df),
+            'evals_summary_count': len(eval_summary_df) if not eval_summary_df.empty else 0,
             'last_checked': datetime.now().isoformat(),
             'last_loaded': load_timestamp,
             'is_fresh': not cache_stale
@@ -804,8 +803,7 @@ def render_sidebar_info(eval_summary_df):
     cache_meta = st.session_state.get('cache_metadata', {})
     scores_count = cache_meta.get('scores_count', 0)
     evals_count = cache_meta.get('evals_count', 0)
-    api_scores = cache_meta.get('api_scores_count', 0)
-    api_evals = cache_meta.get('api_evals_count', 0)
+    scores_loaded = cache_meta.get('scores_loaded', 0)
     last_checked = cache_meta.get('last_checked')
     is_fresh = cache_meta.get('is_fresh', True)
     
@@ -825,8 +823,6 @@ def render_sidebar_info(eval_summary_df):
         
         if is_fresh:
             st.success("✓ Up to date with PGS Catalog", icon="✅")
-        elif api_scores > 0:
-            st.info(f"API has {api_scores:,} scores, {api_evals:,} evaluations")
     
     st.divider()
     
