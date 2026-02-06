@@ -1,0 +1,113 @@
+Good feedback from Lance and Gwênlyn. Let me break this down into actionable items and research the GWAS question:Good, I found the key information. Let me compile the feedback breakdown:
+
+---
+
+## Feedback Breakdown from DS Meeting
+
+### Issue 1: Lance — Add GWAS information (sample size, year) for filtering
+
+**Data availability:** Yes, the PGS Catalog API provides this. Each score has `samples_variants` (GWAS source samples) and `samples_training` (PGS development samples) objects containing:
+- `sample_number` — total individuals
+- `sample_cases` / `sample_controls` — for case-control studies  
+- `ancestry_broad` — ancestry category
+- `source_GWAS_catalog` — link to GWAS Catalog study ID if available
+
+The publication year is already in the publication object (`date_publication`).
+
+**Solution for Replit agent:**
+```
+Feature request: GWAS sample size and year filters
+
+Add the following filters to the Scores tab sidebar:
+
+1. **GWAS Sample Size filter** (range slider)
+   - Extract total sample count from score['samples_variants'] 
+   - Sum sample_number across all GWAS source samples
+   - Range slider from 0 to max in catalog (~5M)
+   - Display as "GWAS N: 10,000 - 500,000"
+
+2. **Publication Year filter** (range slider or dropdown)
+   - Extract from publication['date_publication'] 
+   - Range: 2008 to 2026
+
+3. **Show these values in the scores table:**
+   - Add columns: gwas_n, pub_year
+   - These help users quickly assess score quality (larger GWAS = better effect estimates, newer = better methods)
+
+The data is available in the API — check the `samples_variants` array on each score for GWAS sample info.
+```
+
+---
+
+### Issue 2: Gwênlyn — Traits tab doesn't show PGS IDs except in CSV download
+
+**The problem:** User searches traits, finds matches, but can't see which PGS IDs are associated without downloading CSV.
+
+**Solution for Replit agent:**
+```
+UX fix: Show PGS IDs in Traits tab results
+
+When displaying trait search results, include the associated PGS IDs in the table/display, not just in the CSV export. Options:
+
+1. Add a "PGS IDs" column to the trait results table showing comma-separated IDs (with clickable links)
+2. Or add an expandable row that shows all associated PGS when clicked
+3. Or when a trait row is selected, populate a "Scores for this trait" panel below the table
+
+The goal: users should be able to see which scores exist for a trait without having to download CSV.
+```
+
+---
+
+### Issue 3: Gwênlyn — Performance Metrics tab doesn't respond to PGS ID search
+
+**The problem:** Entering a PGS ID in Performance Metrics tab and hitting enter does nothing. But if you search in Scores tab first, then Performance Metrics populates.
+
+**Root cause:** The Performance Metrics tab might be waiting for score selection from the Scores tab rather than accepting direct PGS ID input.
+
+**Solution for Replit agent:**
+```
+Bug fix: Performance Metrics tab should accept direct PGS ID search
+
+The Performance Metrics tab has a search input but doesn't respond when a PGS ID is entered directly. It only populates after selecting a score from the Scores tab.
+
+Fix: Make the Performance Metrics tab search work independently (same pattern as the Publications tab fix we just did):
+1. When user enters a PGS ID and hits enter/clicks search
+2. Call GET /rest/performance/search?pgs_id={pgs_id} directly  
+3. Display all evaluation metrics for that score
+4. Don't require the user to visit Scores tab first
+```
+
+---
+
+### Issue 4: Gwênlyn — Score Details shows "dist; count" for Ancestry Coverage
+
+**The problem:** Screenshot shows literal text "dist; count" instead of actual values under Ancestry Coverage for PGS004237.
+
+**Root cause:** The template placeholders aren't being populated with real data. This is either:
+- The ancestry data isn't being fetched for that score
+- The display logic has a bug where it shows variable names instead of values
+
+**Solution for Replit agent:**
+```
+Bug fix: Ancestry Coverage shows "dist; count" instead of actual values
+
+In Score Details for PGS004237, the Ancestry Coverage section shows:
+- Development: dist; count  
+- Evaluation: dist; count
+
+These are placeholder strings, not actual data. Fix the display logic to:
+1. Fetch ancestry data from the score's samples_variants (development) and from evaluations (evaluation)
+2. Display actual counts and ancestry distribution, e.g.:
+   - Development: European (100%, N=50,000)
+   - Evaluation: European (80%), East Asian (20%), N=15,000 across 3 cohorts
+3. If no ancestry data is available, show "Not reported" instead of template placeholders
+```
+
+---
+
+**Summary for Replit agent — all four issues:**
+
+1. **GWAS filters** — Add GWAS sample size (from `samples_variants`) and publication year filters to Scores tab
+2. **Traits tab PGS IDs** — Show associated PGS IDs in the trait results, not just in CSV export  
+3. **Performance Metrics search** — Make direct PGS ID search work without requiring Scores tab first
+4. **Ancestry placeholders** — Fix "dist; count" showing instead of actual ancestry data in Score Details
