@@ -36,7 +36,7 @@ A Streamlit web application for exploring the Polygenic Score (PGS) Catalog data
 - Color schemes for visualizations
 
 **app.py**
-- Main Streamlit UI with 4 tabs: Scores, Traits, Publications, Performance
+- Main Streamlit UI with 5 tabs: Scores, Traits, Publications, Performance Metrics, Supplemental Info
 - Preset filter buttons: ARK-Ready, Kraken-Ready, All High-Quality
 - Ontology mapping filter: EFO only, MONDO only, HP only, Multiple, No mapping
 - Quality tier filtering and distribution visualization in all tabs
@@ -44,7 +44,12 @@ A Streamlit web application for exploring the Polygenic Score (PGS) Catalog data
 - Kraken Ingest Estimator with tiered gene estimates based on actual variant counts
 - Clickable DOI links for publications
 - Sidebar with quality tier info, method classification, and ancestry categories
+- **GWAS Sample Size filter**: Range slider for filtering scores by GWAS source sample size (from `samples_variants`)
+- **Publication Year filter**: Range slider for filtering scores by publication year
+- **GWAS N and Year columns**: Added to scores table for quick assessment
+- **PGS IDs in Traits tab**: Associated PGS IDs shown directly in the traits results table
 - **PGS ID search in Publications tab**: Search by score ID to see development publication + all external evaluation publications with source type, best AUC, and ancestry coverage. Works via direct API calls (independent of main data load)
+- **PGS ID search in Performance Metrics tab**: Direct API search works independently of main data load (same pattern as Publications tab)
 
 ### Data Flow
 ```

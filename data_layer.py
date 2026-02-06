@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 BASE_URL = "https://www.pgscatalog.org/rest"
 CACHE_TTL = timedelta(days=30)
 FORCE_REFRESH_DAYS = 30
-CACHE_VERSION = 4
+CACHE_VERSION = 5
 
 
 class PGSDataSource(ABC):
@@ -285,14 +285,36 @@ class APIDataSource(PGSDataSource):
             eval_ancestry = []
             if ancestry_dist:
                 for stage, data in ancestry_dist.items():
-                    if 'dev' in stage.lower() or 'gwas' in stage.lower():
-                        dev_ancestry.extend(data.keys() if isinstance(data, dict) else [])
-                    elif 'eval' in stage.lower():
-                        eval_ancestry.extend(data.keys() if isinstance(data, dict) else [])
+                    if isinstance(data, dict):
+                        dist_data = data.get('dist', {})
+                        if isinstance(dist_data, dict):
+                            ancestry_names = list(dist_data.keys())
+                        else:
+                            ancestry_names = []
+                        if 'dev' in stage.lower() or 'gwas' in stage.lower():
+                            dev_ancestry.extend(ancestry_names)
+                        elif 'eval' in stage.lower():
+                            eval_ancestry.extend(ancestry_names)
             
             pub = score.get('publication', {})
             
             has_any_ontology = has_efo or has_mondo or has_hp
+            
+            gwas_sample_n = 0
+            gwas_ancestries = []
+            for sample in score.get('samples_variants', []):
+                gwas_sample_n += sample.get('sample_number', 0) or 0
+                anc = sample.get('ancestry_broad', '')
+                if anc:
+                    gwas_ancestries.append(anc)
+            
+            pub_date_str = pub.get('date_publication', '')
+            pub_year = None
+            if pub_date_str and len(pub_date_str) >= 4:
+                try:
+                    pub_year = int(pub_date_str[:4])
+                except (ValueError, TypeError):
+                    pass
             
             rows.append({
                 'pgs_id': score.get('id', ''),
@@ -308,6 +330,7 @@ class APIDataSource(PGSDataSource):
                 'n_variants': score.get('variants_number', 0),
                 'pgp_id': pub.get('id', ''),
                 'publication_date': pub.get('date_publication', ''),
+                'pub_year': pub_year,
                 'journal': pub.get('journal', ''),
                 'first_author': pub.get('firstauthor', ''),
                 'doi': pub.get('doi', ''),
@@ -318,6 +341,8 @@ class APIDataSource(PGSDataSource):
                 'grch38_url': harmonized.get('GRCh38', {}).get('positions', ''),
                 'dev_ancestry': '; '.join(set(dev_ancestry)),
                 'eval_ancestry': '; '.join(set(eval_ancestry)),
+                'gwas_sample_n': gwas_sample_n,
+                'gwas_ancestries': '; '.join(set(gwas_ancestries)),
                 'weight_type': score.get('weight_type', ''),
                 'license': score.get('license', ''),
                 'date_release': score.get('date_release', ''),

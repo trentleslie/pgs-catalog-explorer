@@ -362,6 +362,10 @@ def filter_scores(
     has_grch38: bool = False,
     min_variants: Optional[int] = None,
     max_variants: Optional[int] = None,
+    gwas_n_min: Optional[int] = None,
+    gwas_n_max: Optional[int] = None,
+    pub_year_min: Optional[int] = None,
+    pub_year_max: Optional[int] = None,
 ) -> pd.DataFrame:
     """Apply filters to scores dataframe.
     
@@ -423,6 +427,18 @@ def filter_scores(
     
     if max_variants is not None:
         filtered = filtered[filtered['n_variants'] <= max_variants]
+    
+    if gwas_n_min is not None and 'gwas_sample_n' in filtered.columns:
+        filtered = filtered[filtered['gwas_sample_n'] >= gwas_n_min]
+    
+    if gwas_n_max is not None and 'gwas_sample_n' in filtered.columns:
+        filtered = filtered[filtered['gwas_sample_n'] <= gwas_n_max]
+    
+    if pub_year_min is not None and 'pub_year' in filtered.columns:
+        filtered = filtered[filtered['pub_year'].notna() & (filtered['pub_year'] >= pub_year_min)]
+    
+    if pub_year_max is not None and 'pub_year' in filtered.columns:
+        filtered = filtered[filtered['pub_year'].notna() & (filtered['pub_year'] <= pub_year_max)]
     
     return filtered
 

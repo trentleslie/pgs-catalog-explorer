@@ -47,7 +47,7 @@ data_source = get_data_source()
 from datetime import datetime
 
 CACHE_TTL_SECONDS = 30 * 24 * 60 * 60
-CACHE_VERSION = 4
+CACHE_VERSION = 5
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def get_enriched_scores_cached(_version=CACHE_VERSION):
@@ -150,6 +150,9 @@ def main():
     with tab3:
         render_publications_tab_independent()
     
+    with tab4:
+        render_performance_tab_independent()
+    
     scores_df, eval_summary_df = load_data_with_smart_cache()
     
     data_loaded = not scores_df.empty
@@ -165,12 +168,6 @@ def main():
             render_traits_tab(scores_df)
         else:
             st.info("Traits data is loading. Please wait...")
-    
-    with tab4:
-        if data_loaded:
-            render_performance_tab(scores_df)
-        else:
-            st.info("Performance data is loading. Please wait...")
     
     with tab5:
         render_supplemental_tab()
@@ -269,6 +266,37 @@ def render_scores_tab(scores_df, eval_summary_df):
             value=(0, max_variants_val)
         )
         
+        st.write("**GWAS Sample Size**")
+        gwas_max_val = int(scores_df['gwas_sample_n'].max()) if 'gwas_sample_n' in scores_df.columns and scores_df['gwas_sample_n'].max() > 0 else 5000000
+        gwas_min, gwas_max = st.slider(
+            "GWAS N Range",
+            min_value=0,
+            max_value=gwas_max_val,
+            value=(0, gwas_max_val),
+            help="Filter by total GWAS source sample size",
+            label_visibility="collapsed"
+        )
+        
+        st.write("**Publication Year**")
+        if 'pub_year' in scores_df.columns:
+            valid_years = scores_df['pub_year'].dropna()
+            yr_min_val = int(valid_years.min()) if len(valid_years) > 0 else 2008
+            yr_max_val = int(valid_years.max()) if len(valid_years) > 0 else 2026
+        else:
+            yr_min_val, yr_max_val = 2008, 2026
+        pub_yr_min, pub_yr_max = st.slider(
+            "Year Range",
+            min_value=yr_min_val,
+            max_value=yr_max_val,
+            value=(yr_min_val, yr_max_val),
+            label_visibility="collapsed"
+        )
+        
+        gwas_filter_min = gwas_min if gwas_min > 0 else None
+        gwas_filter_max = gwas_max if gwas_max < gwas_max_val else None
+        pub_yr_filter_min = pub_yr_min if pub_yr_min > yr_min_val else None
+        pub_yr_filter_max = pub_yr_max if pub_yr_max < yr_max_val else None
+        
         filtered_df = filter_scores(
             scores_df,
             search_query=search if search else None,
@@ -278,7 +306,11 @@ def render_scores_tab(scores_df, eval_summary_df):
             has_grch37=has_grch37,
             has_grch38=has_grch38,
             min_variants=min_var,
-            max_variants=max_var
+            max_variants=max_var,
+            gwas_n_min=gwas_filter_min,
+            gwas_n_max=gwas_filter_max,
+            pub_year_min=pub_yr_filter_min,
+            pub_year_max=pub_yr_filter_max,
         )
     
     with col2:
@@ -402,7 +434,7 @@ def render_scores_tab(scores_df, eval_summary_df):
                 display_df['hp_mapped'] = display_df['has_hp'].apply(lambda x: '✓' if x else '✗')
             
             display_cols = ['pgs_id', 'pgs_link', 'name', 'trait_names', 'quality_tier', 'method_class', 
-                          'n_evaluations', 'n_variants', 'efo_mapped', 'mondo_mapped', 'hp_mapped', 'grch38_available', 'first_author']
+                          'n_evaluations', 'n_variants', 'gwas_sample_n', 'pub_year', 'efo_mapped', 'mondo_mapped', 'hp_mapped', 'grch38_available', 'first_author']
             available_display = [c for c in display_cols if c in display_df.columns]
             
             display_df = display_df[available_display]
@@ -415,7 +447,9 @@ def render_scores_tab(scores_df, eval_summary_df):
             
             column_config = {
                 'pgs_id': st.column_config.TextColumn("PGS ID"),
-                'pgs_link': st.column_config.LinkColumn("Link", display_text="View")
+                'pgs_link': st.column_config.LinkColumn("Link", display_text="View"),
+                'gwas_sample_n': st.column_config.NumberColumn("GWAS N", format="%d"),
+                'pub_year': st.column_config.NumberColumn("Year", format="%d"),
             }
             
             st.dataframe(
@@ -512,8 +546,10 @@ def render_score_details(pgs_id: str, scores_df: pd.DataFrame):
         st.write("- **GRCh38 Harmonized:** Not available")
     
     st.write("**Ancestry Coverage**")
-    st.write(f"- **Development:** {score_row.get('dev_ancestry', 'N/A')}")
-    st.write(f"- **Evaluation:** {score_row.get('eval_ancestry', 'N/A')}")
+    dev_anc = score_row.get('dev_ancestry', '')
+    eval_anc = score_row.get('eval_ancestry', '')
+    st.write(f"- **Development:** {dev_anc if dev_anc else 'Not reported'}")
+    st.write(f"- **Evaluation:** {eval_anc if eval_anc else 'Not reported'}")
 
 
 def render_traits_tab(scores_df):
@@ -595,13 +631,16 @@ def render_traits_tab(scores_df):
                     lambda x: trait_tier_stats.get(x, {}).get('breakdown', '')
                 )
             
-            display_cols = ['trait_id', 'label', 'n_scores', 'best_tier', 'tier_breakdown', 'categories']
+            display_cols = ['trait_id', 'label', 'n_scores', 'associated_pgs_ids', 'best_tier', 'tier_breakdown', 'categories']
             available_display = [c for c in display_cols if c in display_df.columns]
             
             st.dataframe(
                 display_df[available_display],
                 use_container_width=True,
-                hide_index=True
+                hide_index=True,
+                column_config={
+                    'associated_pgs_ids': st.column_config.TextColumn("PGS IDs", width="large"),
+                }
             )
     
     if not categories_df.empty:
@@ -976,13 +1015,13 @@ def render_publications_tab(scores_df):
             )
 
 
-def render_performance_tab(scores_df):
+def render_performance_tab_independent(scores_df=None):
     st.header("Performance Metrics")
     
     st.info("Performance metrics show how well a PGS predicts the trait in different populations. "
             "Context matters: ancestry and sample size significantly affect metric interpretation.")
     
-    pgs_id = st.text_input("Enter PGS ID to view performance metrics", placeholder="e.g., PGS000001")
+    pgs_id = st.text_input("Enter PGS ID to view performance metrics", placeholder="e.g., PGS000001", key="perf_pgs_search")
     
     if pgs_id:
         pgs_id = pgs_id.upper().strip()
@@ -990,14 +1029,19 @@ def render_performance_tab(scores_df):
         if not pgs_id.startswith("PGS"):
             pgs_id = f"PGS{pgs_id.zfill(6)}"
         
-        metrics_df = data_source.get_performance_metrics(pgs_id)
+        with st.spinner(f"Fetching performance metrics for {pgs_id}..."):
+            metrics_df = data_source.get_performance_metrics(pgs_id)
         
         if metrics_df.empty:
             st.warning(f"No performance metrics found for {pgs_id}")
             return
         
-        score_info = scores_df[scores_df['pgs_id'] == pgs_id]
-        quality_tier = score_info['quality_tier'].iloc[0] if not score_info.empty and 'quality_tier' in score_info.columns else 'Unknown'
+        quality_tier = 'Unknown'
+        if scores_df is not None and not scores_df.empty:
+            score_info = scores_df[scores_df['pgs_id'] == pgs_id]
+            if not score_info.empty and 'quality_tier' in score_info.columns:
+                quality_tier = score_info['quality_tier'].iloc[0]
+        
         tier_emoji = {'Gold': '🥇', 'Silver': '🥈', 'Bronze': '🥉', 'Unrated': '⚫', 'Unknown': '❓'}
         
         st.subheader(f"Performance Metrics for {pgs_id}")
