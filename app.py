@@ -7,7 +7,8 @@ from utils import (
     add_method_classification, add_quality_tiers, filter_scores, filter_traits, filter_publications,
     export_scores_csv, export_traits_csv, export_publications_csv, export_kraken_ingest_csv,
     get_method_class_colors, get_ancestry_colors, get_quality_tier_colors, 
-    classify_method, compute_kraken_stats, compute_trait_tier_stats, compute_publication_tier_stats
+    classify_method, compute_quality_tier, compute_kraken_stats, compute_trait_tier_stats, compute_publication_tier_stats,
+    translate_ancestry_codes
 )
 
 st.set_page_config(
@@ -548,8 +549,8 @@ def render_score_details(pgs_id: str, scores_df: pd.DataFrame):
     st.write("**Ancestry Coverage**")
     dev_anc = score_row.get('dev_ancestry', '')
     eval_anc = score_row.get('eval_ancestry', '')
-    st.write(f"- **Development:** {dev_anc if dev_anc else 'Not reported'}")
-    st.write(f"- **Evaluation:** {eval_anc if eval_anc else 'Not reported'}")
+    st.write(f"- **Development:** {translate_ancestry_codes(dev_anc) if dev_anc else 'Not reported'}")
+    st.write(f"- **Evaluation:** {translate_ancestry_codes(eval_anc) if eval_anc else 'Not reported'}")
 
 
 def render_traits_tab(scores_df):
@@ -1037,10 +1038,18 @@ def render_performance_tab_independent(scores_df=None):
             return
         
         quality_tier = 'Unknown'
-        if scores_df is not None and not scores_df.empty:
-            score_info = scores_df[scores_df['pgs_id'] == pgs_id]
-            if not score_info.empty and 'quality_tier' in score_info.columns:
-                quality_tier = score_info['quality_tier'].iloc[0]
+        score_info_dict = data_source.get_score_by_id(pgs_id)
+        if score_info_dict:
+            method_class = classify_method(score_info_dict.get('method_name', ''))
+            n_evaluations = len(metrics_df)
+            ancestry_groups = set()
+            if 'ancestry' in metrics_df.columns:
+                for anc in metrics_df['ancestry'].dropna():
+                    for a in str(anc).split('; '):
+                        if a.strip():
+                            ancestry_groups.add(a.strip())
+            n_ancestry_groups = len(ancestry_groups)
+            quality_tier = compute_quality_tier(method_class, n_evaluations, n_ancestry_groups)
         
         tier_emoji = {'Gold': '🥇', 'Silver': '🥈', 'Bronze': '🥉', 'Unrated': '⚫', 'Unknown': '❓'}
         
@@ -1054,12 +1063,13 @@ def render_performance_tab_independent(scores_df=None):
         if 'ancestry' in metrics_df.columns:
             ancestry_counts = metrics_df['ancestry'].str.split('; ').explode().value_counts()
             if not ancestry_counts.empty:
+                translated_index = [translate_ancestry_codes(c) for c in ancestry_counts.index]
                 fig = px.pie(
                     values=ancestry_counts.values,
-                    names=ancestry_counts.index,
+                    names=translated_index,
                     title="Evaluation Ancestry Distribution",
-                    color=ancestry_counts.index,
-                    color_discrete_map=get_ancestry_colors()
+                    color=translated_index,
+                    color_discrete_map={translate_ancestry_codes(k): v for k, v in get_ancestry_colors().items()}
                 )
                 fig.update_layout(height=350)
                 st.plotly_chart(fig, use_container_width=True)
@@ -1072,6 +1082,10 @@ def render_performance_tab_independent(scores_df=None):
         has_or = metrics_df['or_val'].notna().any() if 'or_val' in metrics_df.columns else False
         has_hr = metrics_df['hr'].notna().any() if 'hr' in metrics_df.columns else False
         has_beta = metrics_df['beta'].notna().any() if 'beta' in metrics_df.columns else False
+        
+        display_df = metrics_df.copy()
+        if 'ancestry' in display_df.columns:
+            display_df['ancestry'] = display_df['ancestry'].apply(lambda x: translate_ancestry_codes(str(x)) if pd.notna(x) else x)
         
         display_cols = ['ppm_id', 'ancestry', 'sample_size']
         if has_auc:
@@ -1086,7 +1100,7 @@ def render_performance_tab_independent(scores_df=None):
             display_cols.extend(['beta', 'beta_ci'])
         display_cols.extend(['cohorts', 'phenotyping_reported', 'first_author', 'publication_date'])
         
-        available_display = [c for c in display_cols if c in metrics_df.columns]
+        available_display = [c for c in display_cols if c in display_df.columns]
         
         column_config = {
             'auc': st.column_config.NumberColumn("AUC", format="%.3f"),
@@ -1103,7 +1117,7 @@ def render_performance_tab_independent(scores_df=None):
         }
         
         st.dataframe(
-            metrics_df[available_display],
+            display_df[available_display],
             use_container_width=True,
             hide_index=True,
             column_config=column_config

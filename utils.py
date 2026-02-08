@@ -13,6 +13,35 @@ MODERATE_METHODS = [
     'clumping', 'thresholding', 'c + t', 'p + t'
 ]
 
+ANCESTRY_CODE_TO_NAME = {
+    'EUR': 'European',
+    'EAS': 'East Asian',
+    'AFR': 'African',
+    'SAS': 'South Asian',
+    'AMR': 'Hispanic/Latin American',
+    'GME': 'Greater Middle Eastern',
+    'OTH': 'Other',
+    'NR': 'Not Reported',
+    'MAE': 'Multi-ancestry (including European)',
+    'MAO': 'Multi-ancestry (excluding European)',
+    'ASN': 'Additional Asian',
+    'AAC': 'Additional African',
+    'HIS': 'Hispanic or Latin American',
+    'OC': 'Oceanian',
+    'SSA': 'Sub-Saharan African',
+    'NAM': 'Native American',
+    'CAS': 'Central Asian',
+    'SEA': 'South East Asian',
+}
+
+
+def translate_ancestry_codes(ancestry_str: str) -> str:
+    if not ancestry_str:
+        return ancestry_str
+    codes = [c.strip() for c in ancestry_str.replace(';', ',').split(',') if c.strip()]
+    names = [ANCESTRY_CODE_TO_NAME.get(c, c) for c in codes]
+    return ', '.join(names)
+
 
 def classify_method(method_name: Optional[str]) -> str:
     """Classify a PGS construction method.
