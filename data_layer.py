@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 BASE_URL = "https://www.pgscatalog.org/rest"
 CACHE_TTL = timedelta(days=30)
 FORCE_REFRESH_DAYS = 30
-CACHE_VERSION = 5
+CACHE_VERSION = 6
 
 
 class PGSDataSource(ABC):
@@ -302,11 +302,15 @@ class APIDataSource(PGSDataSource):
             
             gwas_sample_n = 0
             gwas_ancestries = []
+            gwas_ids = set()
             for sample in score.get('samples_variants', []):
                 gwas_sample_n += sample.get('sample_number', 0) or 0
                 anc = sample.get('ancestry_broad', '')
                 if anc:
                     gwas_ancestries.append(anc)
+                gwas_cat = sample.get('source_GWAS_catalog', '')
+                if gwas_cat:
+                    gwas_ids.add(gwas_cat)
             
             pub_date_str = pub.get('date_publication', '')
             pub_year = None
@@ -343,6 +347,7 @@ class APIDataSource(PGSDataSource):
                 'eval_ancestry': '; '.join(set(eval_ancestry)),
                 'gwas_sample_n': gwas_sample_n,
                 'gwas_ancestries': '; '.join(set(gwas_ancestries)),
+                'gwas_ids': ', '.join(sorted(gwas_ids)) if gwas_ids else '',
                 'weight_type': score.get('weight_type', ''),
                 'license': score.get('license', ''),
                 'date_release': score.get('date_release', ''),

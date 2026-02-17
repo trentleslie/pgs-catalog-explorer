@@ -147,7 +147,7 @@ def export_scores_csv(df: pd.DataFrame) -> str:
     export_cols = [
         'pgs_id', 'name', 'trait_names', 'method_name', 'method_class', 'quality_tier',
         'n_variants', 'n_evaluations', 'has_efo', 'has_mondo', 'has_hp', 'has_any_ontology',
-        'grch37_available', 'grch38_available', 'dev_ancestry', 'eval_ancestry', 
+        'grch37_available', 'grch38_available', 'dev_ancestry', 'eval_ancestry', 'gwas_ids',
         'first_author', 'publication_date', 'ftp_scoring_file', 'grch37_url', 'grch38_url'
     ]
     

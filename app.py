@@ -434,8 +434,16 @@ def render_scores_tab(scores_df, eval_summary_df):
             if 'has_hp' in display_df.columns:
                 display_df['hp_mapped'] = display_df['has_hp'].apply(lambda x: '✓' if x else '✗')
             
+            if 'gwas_ids' in display_df.columns:
+                display_df['gwas_link'] = display_df['gwas_ids'].apply(
+                    lambda x: f"https://www.ebi.ac.uk/gwas/studies/{x.split(',')[0].strip()}" if x else ''
+                )
+                display_df['gwas_display'] = display_df['gwas_ids'].apply(
+                    lambda x: x if x else 'Not reported'
+                )
+            
             display_cols = ['pgs_id', 'pgs_link', 'name', 'trait_names', 'quality_tier', 'method_class', 
-                          'n_evaluations', 'n_variants', 'gwas_sample_n', 'pub_year', 'efo_mapped', 'mondo_mapped', 'hp_mapped', 'grch38_available', 'first_author']
+                          'n_evaluations', 'n_variants', 'gwas_sample_n', 'gwas_link', 'pub_year', 'efo_mapped', 'mondo_mapped', 'hp_mapped', 'grch38_available', 'first_author']
             available_display = [c for c in display_cols if c in display_df.columns]
             
             display_df = display_df[available_display]
@@ -450,6 +458,10 @@ def render_scores_tab(scores_df, eval_summary_df):
                 'pgs_id': st.column_config.TextColumn("PGS ID"),
                 'pgs_link': st.column_config.LinkColumn("Link", display_text="View"),
                 'gwas_sample_n': st.column_config.NumberColumn("GWAS N", format="%d"),
+                'gwas_link': st.column_config.LinkColumn(
+                    "GWAS ID",
+                    display_text="https://www\\.ebi\\.ac\\.uk/gwas/studies/(.+)"
+                ),
                 'pub_year': st.column_config.NumberColumn("Year", format="%d"),
             }
             
@@ -545,6 +557,14 @@ def render_score_details(pgs_id: str, scores_df: pd.DataFrame):
         st.write(f"- **GRCh38 Harmonized:** [Download]({score_row.get('grch38_url', '#')})")
     else:
         st.write("- **GRCh38 Harmonized:** Not available")
+    
+    st.write("**Source GWAS**")
+    gwas_ids = score_row.get('gwas_ids', '')
+    if gwas_ids:
+        gwas_links = ', '.join(f'[{gid.strip()}](https://www.ebi.ac.uk/gwas/studies/{gid.strip()})' for gid in gwas_ids.split(',') if gid.strip())
+        st.write(f"- **GWAS Catalog:** {gwas_links}")
+    else:
+        st.write("- **GWAS Catalog:** Not reported")
     
     st.write("**Ancestry Coverage**")
     dev_anc = score_row.get('dev_ancestry', '')

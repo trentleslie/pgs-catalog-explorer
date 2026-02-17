@@ -50,6 +50,7 @@ A Streamlit web application for exploring the Polygenic Score (PGS) Catalog data
 - **PGS IDs in Traits tab**: Associated PGS IDs shown directly in the traits results table
 - **PGS ID search in Publications tab**: Search by score ID to see development publication + all external evaluation publications with source type, best AUC, and ancestry coverage. Works via direct API calls (independent of main data load)
 - **PGS ID search in Performance Metrics tab**: Direct API search works independently of main data load (same pattern as Publications tab)
+- **GWAS Catalog ID column**: Clickable GCST study IDs in Scores table (LinkColumn for first ID), full list with clickable links in Score Details
 
 ### Data Flow
 ```
