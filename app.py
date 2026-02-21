@@ -10,6 +10,11 @@ from utils import (
     classify_method, compute_quality_tier, compute_kraken_stats, compute_trait_tier_stats, compute_publication_tier_stats,
     translate_ancestry_codes
 )
+from compare import (
+    load_comparison_data, load_variant_data, filter_comparison_data,
+    get_interpretation, create_scatterplot, build_network, plot_network,
+    get_network_stats, export_comparison_csv
+)
 
 st.set_page_config(
     page_title="PGS Catalog Explorer",
@@ -146,13 +151,16 @@ def main():
     st.markdown('<p class="main-header">PGS Catalog Explorer</p>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Browse and explore polygenic scores, traits, and publications from the PGS Catalog</p>', unsafe_allow_html=True)
     
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Scores", "Traits", "Publications", "Performance Metrics", "Supplemental Info"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Scores", "Traits", "Publications", "Performance Metrics", "Compare", "Supplemental Info"])
     
     with tab3:
         render_publications_tab_independent()
     
     with tab4:
         render_performance_tab_independent()
+    
+    with tab5:
+        render_compare_tab()
     
     scores_df, eval_summary_df = load_data_with_smart_cache()
     
@@ -170,7 +178,7 @@ def main():
         else:
             st.info("Traits data is loading. Please wait...")
     
-    with tab5:
+    with tab6:
         render_supplemental_tab()
     
     with st.sidebar:
@@ -1281,6 +1289,304 @@ def render_sidebar_info(eval_summary_df):
         st.caption("Loading ancestry data...")
         for label, abbrev in standard_ancestries:
             st.write(f"**{abbrev}**: {label}")
+
+
+def render_compare_tab():
+    st.header("PGS Pairwise Comparison")
+
+    result = load_comparison_data()
+    if result is None or result[0] is None:
+        st.warning(
+            "Comparison data not yet available. Run the pairwise comparison pipeline to generate data files in the `data/` directory."
+        )
+        st.markdown("""
+        **Required files:**
+        - `data/pgs_pairwise_stats.parquet` — Summary statistics for all PGS pairs
+        - `data/pgs_pairwise_variants.json.gz` — Shared variant data for plotting
+        - `data/pipeline_metadata.json` — Pipeline metadata
+        """)
+        return
+
+    stats_df, metadata = result
+
+    if metadata:
+        meta_parts = []
+        if metadata.get("generated_date"):
+            meta_parts.append(f"Data generated: {metadata['generated_date']}")
+        if metadata.get("genome_build"):
+            meta_parts.append(f"Genome build: {metadata['genome_build']}")
+        if metadata.get("n_pairs"):
+            meta_parts.append(f"{metadata['n_pairs']} pairs")
+        if metadata.get("n_traits"):
+            meta_parts.append(f"{metadata['n_traits']} traits")
+        if meta_parts:
+            st.caption(" | ".join(meta_parts))
+
+    trait_options = ["All traits"] + sorted(stats_df["trait_label"].unique().tolist())
+
+    st.subheader("Filters")
+    fcol1, fcol2, fcol3 = st.columns(3)
+
+    with fcol1:
+        selected_trait = st.selectbox(
+            "Trait",
+            options=trait_options,
+            key="compare_trait_filter",
+        )
+    with fcol2:
+        max_shared = int(stats_df["n_shared"].max()) if not stats_df.empty else 10000
+        min_shared = st.slider(
+            "Min Shared Variants",
+            min_value=0,
+            max_value=max_shared,
+            value=0,
+            step=max(1, max_shared // 100),
+        )
+    with fcol3:
+        min_corr = st.slider(
+            "Min Correlation (r)",
+            min_value=-1.0,
+            max_value=1.0,
+            value=-1.0,
+            step=0.05,
+        )
+
+    filtered_stats = filter_comparison_data(
+        stats_df,
+        trait=selected_trait,
+        min_shared=min_shared,
+        min_correlation=min_corr,
+    )
+
+    st.subheader("Pairwise Comparison Statistics")
+
+    if filtered_stats.empty:
+        st.info("No pairs match the current filters.")
+    else:
+        st.caption(f"Showing {len(filtered_stats)} of {len(stats_df)} pairs")
+
+        display_df = filtered_stats.copy()
+        display_df["pgs_link_1"] = display_df["pgs_id_1"].apply(
+            lambda x: f"https://www.pgscatalog.org/score/{x}/"
+        )
+        display_df["pgs_link_2"] = display_df["pgs_id_2"].apply(
+            lambda x: f"https://www.pgscatalog.org/score/{x}/"
+        )
+        display_df["pct_overlap_display"] = display_df["pct_overlap_1"].apply(
+            lambda x: f"{x:.1f}%"
+        )
+        display_df["correlation_display"] = display_df["pearson_r"].apply(
+            lambda x: f"{x:.3f}"
+        )
+        display_df["concordance_display"] = display_df["pct_concordant_sign"].apply(
+            lambda x: f"{x:.1f}%"
+        )
+
+        table_cols = [
+            "pgs_id_1", "pgs_link_1", "pgs_id_2", "pgs_link_2",
+            "trait_label", "n_variants_1", "n_variants_2", "n_shared",
+            "pct_overlap_display", "correlation_display", "concordance_display",
+        ]
+        available_cols = [c for c in table_cols if c in display_df.columns]
+
+        column_config = {
+            "pgs_id_1": st.column_config.TextColumn("PGS 1"),
+            "pgs_link_1": st.column_config.LinkColumn("Link 1", display_text="View"),
+            "pgs_id_2": st.column_config.TextColumn("PGS 2"),
+            "pgs_link_2": st.column_config.LinkColumn("Link 2", display_text="View"),
+            "trait_label": st.column_config.TextColumn("Trait"),
+            "n_variants_1": st.column_config.NumberColumn("N1", format="%d"),
+            "n_variants_2": st.column_config.NumberColumn("N2", format="%d"),
+            "n_shared": st.column_config.NumberColumn("Shared", format="%d"),
+            "pct_overlap_display": st.column_config.TextColumn("Overlap %"),
+            "correlation_display": st.column_config.TextColumn("Correlation"),
+            "concordance_display": st.column_config.TextColumn("Concordance"),
+        }
+
+        st.dataframe(
+            display_df[available_cols],
+            use_container_width=True,
+            hide_index=True,
+            column_config=column_config,
+        )
+
+        csv_data = export_comparison_csv(filtered_stats)
+        st.download_button(
+            label="Download Filtered Pairs (CSV)",
+            data=csv_data,
+            file_name="pgs_pairwise_comparison.csv",
+            mime="text/csv",
+        )
+
+    st.divider()
+    st.subheader("Comparison Visualization")
+    st.markdown("Enter two PGS IDs to visualize their variant overlap and effect weight correlation.")
+
+    all_pgs_ids = sorted(set(stats_df["pgs_id_1"]) | set(stats_df["pgs_id_2"]))
+
+    vcol1, vcol2 = st.columns(2)
+    with vcol1:
+        pgs1_input = st.selectbox(
+            "PGS 1",
+            options=[""] + all_pgs_ids,
+            key="compare_pgs1",
+        )
+    with vcol2:
+        pgs2_input = st.selectbox(
+            "PGS 2",
+            options=[""] + all_pgs_ids,
+            key="compare_pgs2",
+        )
+
+    if pgs1_input and pgs2_input and pgs1_input != pgs2_input:
+        pair_row = stats_df[
+            ((stats_df["pgs_id_1"] == pgs1_input) & (stats_df["pgs_id_2"] == pgs2_input)) |
+            ((stats_df["pgs_id_1"] == pgs2_input) & (stats_df["pgs_id_2"] == pgs1_input))
+        ]
+
+        if pair_row.empty:
+            st.warning(f"No comparison data found for {pgs1_input} and {pgs2_input}. These scores may not share the same trait.")
+        else:
+            pair_stats = pair_row.iloc[0].to_dict()
+            actual_pgs1 = pair_stats["pgs_id_1"]
+            actual_pgs2 = pair_stats["pgs_id_2"]
+
+            n_shared = pair_stats["n_shared"]
+            if n_shared == 0:
+                st.warning("No overlapping variants between these scores. Scatterplot is not available.")
+            else:
+                with st.spinner("Loading variant data..."):
+                    variant_data = load_variant_data(actual_pgs1, actual_pgs2)
+
+                if not variant_data:
+                    st.warning("Variant-level data not available for this pair.")
+                else:
+                    fig = create_scatterplot(variant_data, actual_pgs1, actual_pgs2, pair_stats)
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+
+            st.markdown("**Summary Statistics:**")
+            scol1, scol2, scol3, scol4 = st.columns(4)
+            with scol1:
+                st.metric(f"Variants in {actual_pgs1}", f"{pair_stats['n_variants_1']:,}")
+            with scol2:
+                st.metric(f"Variants in {actual_pgs2}", f"{pair_stats['n_variants_2']:,}")
+            with scol3:
+                overlap_text = f"{pair_stats['n_shared']:,}"
+                overlap_detail = f"{pair_stats['pct_overlap_1']:.1f}% of {actual_pgs1}, {pair_stats['pct_overlap_2']:.1f}% of {actual_pgs2}"
+                st.metric("Shared Variants", overlap_text, help=overlap_detail)
+            with scol4:
+                p_val = pair_stats.get("pearson_p", 0)
+                p_str = f"p < 0.001" if p_val < 0.001 else f"p = {p_val:.3f}"
+                st.metric("Pearson r", f"{pair_stats['pearson_r']:.3f}", help=p_str)
+
+            st.markdown(f"**Sign concordance:** {pair_stats['pct_concordant_sign']:.1f}%")
+
+            if pair_stats.get("n_sampled") and pair_stats["n_sampled"] < pair_stats["n_shared"]:
+                st.caption(f"Showing {pair_stats['n_sampled']:,} of {pair_stats['n_shared']:,} shared variants (sampled for performance)")
+
+            st.markdown("**Interpretation:**")
+            st.info(get_interpretation(pair_stats))
+
+    elif pgs1_input and pgs2_input and pgs1_input == pgs2_input:
+        st.warning("Please select two different PGS IDs.")
+
+    st.divider()
+
+    st.subheader("PRS Correlation Network")
+
+    network_trait_options = sorted(stats_df["trait_label"].unique().tolist())
+    if not network_trait_options:
+        st.info("No trait data available for network view.")
+        return
+
+    ncol1, ncol2 = st.columns(2)
+    with ncol1:
+        network_trait = st.selectbox(
+            "Trait",
+            options=network_trait_options,
+            key="network_trait",
+        )
+    with ncol2:
+        metric = st.selectbox(
+            "Edge Metric",
+            options=["pearson_r", "pct_concordant_sign", "jaccard_index"],
+            format_func=lambda x: {
+                "pearson_r": "Pearson Correlation (r)",
+                "pct_concordant_sign": "Sign Concordance (%)",
+                "jaccard_index": "Jaccard Index",
+            }.get(x, x),
+            key="network_metric",
+        )
+
+    default_threshold = 0.5
+    if metric == "pct_concordant_sign":
+        default_threshold = 70.0
+        threshold = st.slider(
+            f"Edge Threshold (show edges where {metric} >= threshold)",
+            min_value=0.0,
+            max_value=100.0,
+            value=default_threshold,
+            step=1.0,
+            key="network_threshold",
+        )
+    else:
+        threshold = st.slider(
+            f"Edge Threshold (show edges where {metric} >= threshold)",
+            min_value=0.0 if metric != "pearson_r" else -1.0,
+            max_value=1.0,
+            value=default_threshold,
+            step=0.05,
+            key="network_threshold",
+        )
+
+    if network_trait:
+        G = build_network(stats_df, network_trait, metric, threshold)
+
+        if G.number_of_nodes() == 0:
+            st.warning("No PRS found for this trait.")
+        elif G.number_of_nodes() == 1:
+            st.info("Only 1 PRS for this trait — no comparisons possible.")
+        else:
+            fig = plot_network(G, f"PRS Network: {network_trait}")
+            if fig:
+                st.plotly_chart(fig, use_container_width=True)
+
+            net_stats = get_network_stats(G)
+
+            mcol1, mcol2, mcol3, mcol4 = st.columns(4)
+            mcol1.metric("PRS (nodes)", net_stats["n_nodes"])
+            mcol2.metric("Edges", f"{net_stats['n_edges']} / {net_stats['n_possible_edges']}")
+            mcol3.metric("Clusters", net_stats["n_clusters"])
+            mcol4.metric("Redundant (r>0.95)", net_stats["redundant_pairs"])
+
+            if net_stats["isolated_nodes"] > 0:
+                st.caption(f"{net_stats['isolated_nodes']} PRS have no connections above the threshold")
+
+    with st.expander("How to interpret the network"):
+        st.markdown("""
+        **What the network shows:**
+        - Each **node** is a PRS for the selected trait
+        - **Edges** connect PRS pairs with the selected metric above the threshold
+        - **Node size** reflects number of variants in the PRS
+        - **Node color** reflects how many connections (darker = more connected)
+        - **Edge color** reflects correlation strength (green = high, yellow = moderate, red = low)
+
+        **Patterns to look for:**
+
+        | Pattern | Interpretation |
+        |---------|----------------|
+        | Tight cluster with thick green edges | Highly correlated scores — likely redundant, pick best-validated one |
+        | Multiple separate clusters | Different "families" of PRS using different approaches or GWAS sources |
+        | Isolated nodes | PRS that don't share much signal with others — may capture unique variance |
+        | Red/yellow edges | Moderate correlation — scores may complement each other |
+
+        **Recommended workflow:**
+        1. Start with threshold ~0.5 to see overall structure
+        2. Raise threshold to 0.8+ to identify near-redundant pairs
+        3. Lower threshold to 0.3 to see weaker connections
+        4. Select specific pairs above to compare in the scatterplot
+        """)
 
 
 def render_supplemental_tab():

@@ -1,0 +1,9 @@
+{
+  "generated_date": "2026-02-20",
+  "genome_build": "GRCh38",
+  "pipeline_version": "0.1.0",
+  "n_scores_compared": 12,
+  "n_traits": 3,
+  "n_pairs": 19,
+  "sampling_note": "Variant data sampled to max 5,000 per pair for performance"
+}

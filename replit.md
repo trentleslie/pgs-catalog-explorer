@@ -10,9 +10,15 @@ A Streamlit web application for exploring the Polygenic Score (PGS) Catalog data
 ├── app.py              # Main Streamlit application
 ├── data_layer.py       # Abstract data source interface and API implementation
 ├── utils.py            # Utility functions for filtering, classification, export
+├── compare.py          # PGS pairwise comparison, scatterplot, network graph
+├── generate_sample_data.py  # Script to generate sample comparison data for testing
 ├── README.md           # Documentation with production upgrade path
 ├── .streamlit/
 │   └── config.toml     # Streamlit server configuration
+├── data/               # Pre-computed comparison data (from pipeline)
+│   ├── pgs_pairwise_stats.parquet
+│   ├── pgs_pairwise_variants.json.gz
+│   └── pipeline_metadata.json
 └── attached_assets/    # Reference materials
 ```
 
@@ -35,8 +41,19 @@ A Streamlit web application for exploring the Polygenic Score (PGS) Catalog data
 - CSV export utilities (standard and Kraken ingest plan)
 - Color schemes for visualizations
 
+**compare.py**
+- `load_comparison_data()`: Loads pre-computed pairwise stats from parquet + pipeline metadata
+- `load_variant_data()`: Lazy-loads shared variant data for a specific pair from gzipped JSON
+- `filter_comparison_data()`: Filters pairs by trait, min shared variants, min correlation
+- `get_interpretation()`: Generates dynamic interpretation text based on correlation, overlap, concordance
+- `create_scatterplot()`: Plotly scatterplot of effect weights colored by sign concordance (WebGL for >5K points)
+- `build_network()`: NetworkX graph of PRS for a trait with configurable edge metric/threshold
+- `plot_network()`: Plotly visualization of the network with node size by variants, edge color by correlation
+- `get_network_stats()`: Computes cluster count, isolated nodes, redundant pairs, density
+- `export_comparison_csv()`: CSV export of filtered comparison table
+
 **app.py**
-- Main Streamlit UI with 5 tabs: Scores, Traits, Publications, Performance Metrics, Supplemental Info
+- Main Streamlit UI with 6 tabs: Scores, Traits, Publications, Performance Metrics, Compare, Supplemental Info
 - Preset filter buttons: ARK-Ready, Kraken-Ready, All High-Quality
 - Ontology mapping filter: EFO only, MONDO only, HP only, Multiple, No mapping
 - Quality tier filtering and distribution visualization in all tabs
@@ -54,13 +71,13 @@ A Streamlit web application for exploring the Polygenic Score (PGS) Catalog data
 
 ### Data Flow
 ```
-PGS Catalog REST API
-        ↓
-   APIDataSource (with @st.cache_data)
-        ↓
-   Filter/Transform (utils.py)
-        ↓
-   Streamlit UI (app.py)
+PGS Catalog REST API                Pre-computed Pipeline Data
+        ↓                                    ↓
+   APIDataSource (with @st.cache_data)    Parquet/JSON files (data/)
+        ↓                                    ↓
+   Filter/Transform (utils.py)          compare.py (load + filter)
+        ↓                                    ↓
+   Streamlit UI (app.py)                Compare Tab (app.py)
 ```
 
 ## Technical Notes
