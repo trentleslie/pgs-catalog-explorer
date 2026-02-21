@@ -1,0 +1,340 @@
+Great idea — a network view would show the full landscape of PRS relationships for a trait at a glance, rather than pairwise. Here’s an addition to the prompt:
+
+-----
+
+## Additional Feature: PRS Correlation Network View
+
+Add a network visualization to the Compare tab that shows all PRS for a selected trait as nodes, with edges connecting pairs that exceed a correlation threshold.
+
+### UI Layout (add below the scatterplot section)
+
+```
+┌─ Network View ────────────────────────────────────────────────────┐
+│                                                                    │
+│  Trait: [Dropdown - same as above, synced]                        │
+│  Edge Threshold: [Slider]  Metric: [Dropdown]                     │
+│                                                                    │
+│  ┌──────────────────────────────────────────────────────────────┐ │
+│  │                                                              │ │
+│  │                    ○ PGS000045                               │ │
+│  │                   /│\                                        │ │
+│  │                  / │ \                                       │ │
+│  │       PGS000012 ○──┼──○ PGS000001                           │ │
+│  │                  \ │ /                                       │ │
+│  │                   \│/                                        │ │
+│  │                    ○ PGS000089                               │ │
+│  │                                                              │ │
+│  │            ○ PGS000034      ○ PGS000067                      │ │
+│  │           (isolated)       (isolated)                        │ │
+│  │                                                              │ │
+│  └──────────────────────────────────────────────────────────────┘ │
+│                                                                    │
+│  Legend:                                                           │
+│  • Node size: Number of variants in PRS                           │
+│  • Edge thickness: Correlation strength                           │
+│  • Edge color: Green (r > 0.7) / Yellow (0.3-0.7) / Red (< 0.3)  │
+│  • Isolated nodes: No edges above threshold                       │
+│                                                                    │
+│  Network Stats:                                                    │
+│  • Nodes: 8 PRS for this trait                                    │
+│  • Edges: 12 pairs above threshold (of 28 total pairs)            │
+│  • Clusters: 2 (main cluster of 6, isolated pair)                 │
+│  • Highly redundant pairs (r > 0.95): 2                           │
+│                                                                    │
+│  Click a node to see details | Click an edge to load scatterplot  │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+### Edge Metric Options
+
+Let users choose which metric determines edge presence:
+
+|Metric               |Description                                    |Good threshold range|
+|---------------------|-----------------------------------------------|--------------------|
+|`pearson_r`          |Effect weight correlation                      |0.3 – 0.9           |
+|`pct_overlap_1`      |% variant overlap (relative to smaller PRS)    |20% – 80%           |
+|`pct_concordant_sign`|% of shared variants with same effect direction|70% – 95%           |
+|`jaccard_index`      |n_shared / (n_1 + n_2 - n_shared)              |0.1 – 0.5           |
+
+**Default:** `pearson_r` with threshold 0.5
+
+**Note:** You’ll need to compute `jaccard_index` from existing columns:
+
+```python
+df["jaccard_index"] = df["n_shared"] / (df["n_variants_1"] + df["n_variants_2"] - df["n_shared"])
+```
+
+### Network Implementation
+
+Use **Plotly** with a force-directed layout, or **pyvis** for interactive networks. Plotly is simpler to integrate with Streamlit.
+
+```python
+import networkx as nx
+import plotly.graph_objects as go
+
+def build_network(
+    stats_df: pd.DataFrame,
+    trait_efo: str,
+    metric: str = "pearson_r",
+    threshold: float = 0.5
+) -> tuple[nx.Graph, dict]:
+    """
+    Build a network graph for PRS of a given trait.
+    
+    Returns:
+        G: NetworkX graph
+        node_info: Dict of PGS ID -> metadata
+    """
+    # Filter to trait
+    trait_df = stats_df[stats_df["trait_efo"] == trait_efo].copy()
+    
+    # Get all unique PGS IDs for this trait
+    all_pgs = set(trait_df["pgs_id_1"]) | set(trait_df["pgs_id_2"])
+    
+    # Build graph
+    G = nx.Graph()
+    
+    # Add nodes
+    for pgs_id in all_pgs:
+        # Get variant count (from either column where this PGS appears)
+        row = trait_df[trait_df["pgs_id_1"] == pgs_id]
+        if len(row) > 0:
+            n_variants = row.iloc[0]["n_variants_1"]
+        else:
+            row = trait_df[trait_df["pgs_id_2"] == pgs_id]
+            n_variants = row.iloc[0]["n_variants_2"] if len(row) > 0 else 0
+        
+        G.add_node(pgs_id, n_variants=n_variants)
+    
+    # Add edges above threshold
+    for _, row in trait_df.iterrows():
+        metric_value = row[metric]
+        if pd.notna(metric_value) and metric_value >= threshold:
+            G.add_edge(
+                row["pgs_id_1"],
+                row["pgs_id_2"],
+                weight=metric_value,
+                pearson_r=row["pearson_r"],
+                n_shared=row["n_shared"],
+            )
+    
+    return G
+
+
+def plot_network(G: nx.Graph, title: str = "PRS Correlation Network") -> go.Figure:
+    """Create a Plotly figure for the network."""
+    
+    # Use spring layout for positioning
+    pos = nx.spring_layout(G, k=2, iterations=50, seed=42)
+    
+    # Edge traces
+    edge_traces = []
+    for edge in G.edges(data=True):
+        x0, y0 = pos[edge[0]]
+        x1, y1 = pos[edge[1]]
+        weight = edge[2].get("weight", 0.5)
+        r = edge[2].get("pearson_r", 0.5)
+        
+        # Color by correlation strength
+        if r > 0.7:
+            color = "#2ecc71"  # Green
+        elif r > 0.3:
+            color = "#f39c12"  # Yellow/orange
+        else:
+            color = "#e74c3c"  # Red
+        
+        edge_traces.append(go.Scatter(
+            x=[x0, x1, None],
+            y=[y0, y1, None],
+            mode="lines",
+            line=dict(width=weight * 5, color=color),
+            hoverinfo="text",
+            text=f"r={r:.2f}, shared={edge[2].get('n_shared', 0):,}",
+            showlegend=False,
+        ))
+    
+    # Node trace
+    node_x = [pos[node][0] for node in G.nodes()]
+    node_y = [pos[node][1] for node in G.nodes()]
+    node_sizes = [G.nodes[node].get("n_variants", 10000) / 50000 * 30 + 10 for node in G.nodes()]
+    node_text = [f"{node}<br>{G.nodes[node].get('n_variants', 0):,} variants" for node in G.nodes()]
+    
+    # Color nodes by degree (number of connections)
+    node_colors = [G.degree(node) for node in G.nodes()]
+    
+    node_trace = go.Scatter(
+        x=node_x,
+        y=node_y,
+        mode="markers+text",
+        marker=dict(
+            size=node_sizes,
+            color=node_colors,
+            colorscale="Blues",
+            showscale=True,
+            colorbar=dict(title="Connections"),
+            line=dict(width=2, color="white"),
+        ),
+        text=[node for node in G.nodes()],
+        textposition="top center",
+        hovertext=node_text,
+        hoverinfo="text",
+    )
+    
+    # Create figure
+    fig = go.Figure(data=edge_traces + [node_trace])
+    
+    fig.update_layout(
+        title=title,
+        showlegend=False,
+        hovermode="closest",
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        plot_bgcolor="white",
+        width=800,
+        height=600,
+    )
+    
+    return fig
+
+
+def get_network_stats(G: nx.Graph) -> dict:
+    """Compute summary statistics for the network."""
+    
+    # Find connected components (clusters)
+    components = list(nx.connected_components(G))
+    
+    # Count highly redundant pairs
+    redundant_pairs = sum(
+        1 for _, _, d in G.edges(data=True) 
+        if d.get("pearson_r", 0) > 0.95
+    )
+    
+    return {
+        "n_nodes": G.number_of_nodes(),
+        "n_edges": G.number_of_edges(),
+        "n_possible_edges": G.number_of_nodes() * (G.number_of_nodes() - 1) // 2,
+        "n_clusters": len(components),
+        "largest_cluster": max(len(c) for c in components) if components else 0,
+        "isolated_nodes": sum(1 for c in components if len(c) == 1),
+        "redundant_pairs": redundant_pairs,
+        "density": nx.density(G),
+    }
+```
+
+### Streamlit Integration
+
+```python
+st.subheader("🕸️ PRS Correlation Network")
+
+col1, col2 = st.columns([1, 1])
+
+with col1:
+    selected_trait = st.selectbox(
+        "Trait",
+        options=trait_options,
+        key="network_trait"
+    )
+
+with col2:
+    metric = st.selectbox(
+        "Edge Metric",
+        options=["pearson_r", "pct_concordant_sign", "jaccard_index"],
+        format_func=lambda x: {
+            "pearson_r": "Pearson Correlation (r)",
+            "pct_concordant_sign": "Sign Concordance (%)",
+            "jaccard_index": "Jaccard Index",
+        }.get(x, x)
+    )
+
+threshold = st.slider(
+    f"Edge Threshold (show edges where {metric} ≥ threshold)",
+    min_value=0.0,
+    max_value=1.0,
+    value=0.5,
+    step=0.05,
+)
+
+# Build and display network
+if selected_trait:
+    G = build_network(comparison_stats, selected_trait, metric, threshold)
+    
+    if G.number_of_nodes() == 0:
+        st.warning("No PRS found for this trait.")
+    elif G.number_of_nodes() == 1:
+        st.info("Only 1 PRS for this trait — no comparisons possible.")
+    else:
+        # Show network
+        fig = plot_network(G, f"PRS Network: {selected_trait}")
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Show stats
+        stats = get_network_stats(G)
+        
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("PRS (nodes)", stats["n_nodes"])
+        col2.metric("Edges", f"{stats['n_edges']} / {stats['n_possible_edges']}")
+        col3.metric("Clusters", stats["n_clusters"])
+        col4.metric("Redundant Pairs (r>0.95)", stats["redundant_pairs"])
+        
+        if stats["isolated_nodes"] > 0:
+            st.caption(f"ℹ️ {stats['isolated_nodes']} PRS have no connections above the threshold")
+```
+
+### Interactions
+
+1. **Click node** → Show PGS details in sidebar or expander (variant count, method, publication)
+1. **Click edge** → Load that pair into the scatterplot comparison above
+1. **Hover** → Show correlation value and shared variant count
+1. **Drag threshold slider** → Network updates in real-time
+
+### Interpretation Guidance
+
+Add a help expander:
+
+```python
+with st.expander("How to interpret the network"):
+    st.markdown("""
+    **What the network shows:**
+    - Each **node** is a PRS for the selected trait
+    - **Edges** connect PRS pairs with correlation above the threshold
+    - **Node size** reflects number of variants in the PRS
+    - **Node color** reflects how many connections (darker = more connected)
+    - **Edge color** reflects correlation strength (green = high, red = low)
+    
+    **Patterns to look for:**
+    
+    | Pattern | Interpretation |
+    |---------|----------------|
+    | Tight cluster with thick green edges | Highly correlated scores — likely redundant, pick best-validated one |
+    | Multiple separate clusters | Different "families" of PRS using different approaches or GWAS sources |
+    | Isolated nodes | PRS that don't share much signal with others — may capture unique variance |
+    | Red/yellow edges | Moderate correlation — scores may complement each other |
+    
+    **Recommended workflow:**
+    1. Start with threshold ~0.5 to see overall structure
+    2. Raise threshold to 0.8+ to identify near-redundant pairs
+    3. Lower threshold to 0.3 to see weaker connections
+    4. Click edges to compare specific pairs in the scatterplot
+    """)
+```
+
+### Data Requirements
+
+The network view uses the same `pgs_pairwise_stats.parquet` file — no additional data needed. Just filter by trait and apply the threshold.
+
+### Testing the Network View
+
+1. Select a trait with 5+ PRS — verify all nodes appear
+1. Adjust threshold — verify edges appear/disappear correctly
+1. Verify isolated nodes are visible (positioned around periphery)
+1. Click an edge — verify scatterplot updates
+1. Verify metrics display correctly
+1. Test with traits that have only 2 PRS (minimal network)
+1. Test with traits that have 20+ PRS (performance, layout)
+
+-----
+
+This gives users two complementary views:
+
+- **Table + Scatterplot:** Deep dive into specific pairs
+- **Network:** Bird’s-eye view of how all PRS for a trait relate to each other​​​​​​​​​​​​​​​​

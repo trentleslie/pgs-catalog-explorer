@@ -1,0 +1,288 @@
+Here’s the prompt for the Replit agent:
+
+-----
+
+## Feature Request: PGS Compare Tab
+
+Add a new “Compare” tab to the PGS Catalog Explorer that allows users to compare two polygenic scores for the same trait by visualizing their variant overlap and effect weight correlation.
+
+### Data Source
+
+The comparison data comes from a pre-computed pipeline (run separately). The app needs to load these files:
+
+1. **`pgs_pairwise_stats.parquet`** — Summary statistics for all PGS pairs (~10-50K rows)
+
+- Columns: `pgs_id_1`, `pgs_id_2`, `trait_efo`, `trait_label`, `n_variants_1`, `n_variants_2`, `n_shared`, `pct_overlap_1`, `pct_overlap_2`, `pearson_r`, `pearson_p`, `pct_concordant_sign`, `n_sampled`
+
+1. **`pgs_pairwise_variants.json.gz`** — Shared variant data for plotting (gzipped JSON)
+
+- Structure: `{"PGS000001_PGS000002": [{"variant_id": "rs123", "weight_1": 0.05, "weight_2": 0.048}, ...], ...}`
+
+1. **`pipeline_metadata.json`** — When data was generated, config used
+
+For now, stub these with sample data or check if files exist in a `data/` directory. The actual files will be added after the pipeline runs.
+
+### UI Layout
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Compare Tab                                                     │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌─ Filters ──────────────────────────────────────────────────┐ │
+│  │ Trait: [Dropdown - searchable, all traits with pairs]      │ │
+│  │ Min Shared Variants: [slider 0-10000]                      │ │
+│  │ Min Correlation: [slider -1 to 1]                          │ │
+│  └────────────────────────────────────────────────────────────┘ │
+│                                                                  │
+│  ┌─ Pairwise Comparison Statistics ───────────────────────────┐ │
+│  │                                                             │ │
+│  │  [Sortable, filterable table]                              │ │
+│  │  ┌────────┬────────┬─────────┬────────┬────────┬────────┐  │ │
+│  │  │ PGS 1  │ PGS 2  │ Trait   │Shared N│Overlap%│Pearson r│ │ │
+│  │  ├────────┼────────┼─────────┼────────┼────────┼────────┤  │ │
+│  │  │PGS0001 │PGS0045 │T2D      │ 125000 │  83.3% │  0.92  │  │ │
+│  │  │PGS0002 │PGS0003 │CAD      │  45000 │  12.1% │  0.45  │  │ │
+│  │  │  ...   │  ...   │  ...    │  ...   │  ...   │  ...   │  │ │
+│  │  └────────┴────────┴─────────┴────────┴────────┴────────┘  │ │
+│  │                                                             │ │
+│  │  Showing X of Y pairs | [Download CSV]                     │ │
+│  └─────────────────────────────────────────────────────────────┘ │
+│                                                                  │
+│  ┌─ Comparison Visualization ─────────────────────────────────┐ │
+│  │                                                             │ │
+│  │  Select a row above to visualize, or enter PGS IDs:        │ │
+│  │  PGS 1: [________]  PGS 2: [________]  [Compare]           │ │
+│  │                                                             │ │
+│  │  ┌─────────────────────────────────────────────────────┐   │ │
+│  │  │                                                     │   │ │
+│  │  │              [Scatterplot]                          │   │ │
+│  │  │                                                     │   │ │
+│  │  │   Y: PGS2 weight                                    │   │ │
+│  │  │   │      * * *                                      │   │ │
+│  │  │   │    *  *  * *                                    │   │ │
+│  │  │   │  *   *    *  *   ● Concordant (green)           │   │ │
+│  │  │   │----*---*-------  ● Discordant (red)             │   │ │
+│  │  │   │  *    *   *                                     │   │ │
+│  │  │   └──────────────── X: PGS1 weight                  │   │ │
+│  │  │                                                     │   │ │
+│  │  └─────────────────────────────────────────────────────┘   │ │
+│  │                                                             │ │
+│  │  Summary Stats:                                             │ │
+│  │  • Variants in PGS1: 150,000 | Variants in PGS2: 1,200,000 │ │
+│  │  • Shared variants: 125,000 (83.3% of PGS1, 10.4% of PGS2) │ │
+│  │  • Pearson r: 0.87 (p < 0.001)                             │ │
+│  │  • Sign concordance: 94.2%                                  │ │
+│  │                                                             │ │
+│  │  Interpretation:                                            │ │
+│  │  [Dynamic text based on stats - see below]                 │ │
+│  └─────────────────────────────────────────────────────────────┘ │
+│                                                                  │
+│  Data generated: 2026-02-20 | Genome build: GRCh38              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Table Requirements
+
+The statistics table should be:
+
+1. **Filterable by trait** — Dropdown filters table to show only pairs for selected trait (or “All traits”)
+1. **Sortable by all numeric columns** — Click column header to sort:
+
+- `n_shared` (shared variant count)
+- `pct_overlap_1` (% overlap relative to PGS1)
+- `pct_overlap_2` (% overlap relative to PGS2)
+- `pearson_r` (correlation)
+- `pct_concordant_sign` (sign concordance)
+
+1. **Clickable rows** — Clicking a row populates the visualization below
+1. **Columns to display:**
+   
+   |Column               |Header     |Format                                                  |
+   |---------------------|-----------|--------------------------------------------------------|
+   |`pgs_id_1`           |PGS 1      |Link to PGS Catalog                                     |
+   |`pgs_id_2`           |PGS 2      |Link to PGS Catalog                                     |
+   |`trait_label`        |Trait      |Text                                                    |
+   |`n_variants_1`       |N₁         |Number with commas                                      |
+   |`n_variants_2`       |N₂         |Number with commas                                      |
+   |`n_shared`           |Shared     |Number with commas                                      |
+   |`pct_overlap_1`      |Overlap %  |“83.3%”                                                 |
+   |`pearson_r`          |Correlation|“0.87” with color (green >0.7, yellow 0.3-0.7, red <0.3)|
+   |`pct_concordant_sign`|Concordance|“94.2%”                                                 |
+1. **CSV export** — Button to download filtered/sorted table
+
+### Scatterplot Requirements
+
+Use Plotly for interactivity:
+
+1. **Axes:** X = PGS1 effect weight, Y = PGS2 effect weight
+1. **Points colored by sign concordance:**
+
+- Green (#2ecc71): Concordant (same sign)
+- Red (#e74c3c): Discordant (opposite sign)
+
+1. **Reference lines:**
+
+- Diagonal dashed line (y = x) for perfect agreement
+- Horizontal and vertical dotted lines at y=0 and x=0
+
+1. **Hover info:** Show variant ID, both weights
+1. **Title:** “{PGS1} vs {PGS2}” with subtitle showing r, n_shared, trait
+1. **For large datasets (>10K points):** Use `scattergl` for WebGL rendering, or sample down with a note
+
+### Interpretation Text
+
+Generate dynamic interpretation based on the statistics:
+
+```python
+def get_interpretation(stats: dict) -> str:
+    r = stats["pearson_r"]
+    overlap_1 = stats["pct_overlap_1"]
+    overlap_2 = stats["pct_overlap_2"]
+    concordance = stats["pct_concordant_sign"]
+    
+    parts = []
+    
+    # Correlation interpretation
+    if r > 0.9:
+        parts.append("These scores are highly correlated — they may be essentially redundant. Choose based on validation performance or ancestry coverage.")
+    elif r > 0.7:
+        parts.append("These scores show strong agreement in their effect estimates for shared variants.")
+    elif r > 0.3:
+        parts.append("These scores show moderate agreement. They may capture partially different genetic signals.")
+    elif r > 0:
+        parts.append("These scores show weak positive correlation despite targeting the same trait.")
+    else:
+        parts.append("⚠️ These scores are negatively correlated — this may indicate effect allele coding differences or fundamentally different modeling approaches.")
+    
+    # Overlap interpretation
+    if overlap_1 < 20 and overlap_2 < 20:
+        parts.append("Very low variant overlap suggests these scores use substantially different variant sets.")
+    elif abs(overlap_1 - overlap_2) > 50:
+        larger = "PGS1" if overlap_1 > overlap_2 else "PGS2"
+        parts.append(f"Asymmetric overlap — {larger} contains most of the other score's variants plus additional ones.")
+    
+    # Concordance interpretation
+    if concordance < 70:
+        parts.append("⚠️ Low sign concordance — a substantial fraction of shared variants have opposite effect directions between the two scores.")
+    
+    return " ".join(parts)
+```
+
+### Data Loading
+
+```python
+@st.cache_data
+def load_comparison_data():
+    """Load pre-computed pairwise comparison data."""
+    stats_path = Path("data/pgs_pairwise_stats.parquet")
+    
+    if not stats_path.exists():
+        return None, None, None
+    
+    stats_df = pd.read_parquet(stats_path)
+    
+    # Load metadata
+    metadata_path = Path("data/pipeline_metadata.json")
+    metadata = json.load(open(metadata_path)) if metadata_path.exists() else {}
+    
+    return stats_df, metadata
+
+def load_variant_data(pgs_id_1: str, pgs_id_2: str) -> list[dict]:
+    """Lazy-load shared variant data for a specific pair."""
+    variants_path = Path("data/pgs_pairwise_variants.json.gz")
+    
+    if not variants_path.exists():
+        return []
+    
+    with gzip.open(variants_path, "rt") as f:
+        all_variants = json.load(f)
+    
+    # Try both orderings
+    pair_key = f"{pgs_id_1}_{pgs_id_2}"
+    if pair_key not in all_variants:
+        pair_key = f"{pgs_id_2}_{pgs_id_1}"
+    
+    return all_variants.get(pair_key, [])
+```
+
+### Edge Cases
+
+1. **No comparison data available:** Show message “Comparison data not yet available. Run the pairwise comparison pipeline to generate data.”
+1. **Trait with only 1 PGS:** Not in the data (pipeline only computes pairs)
+1. **Zero shared variants:** Show stats but disable scatterplot, note “No overlapping variants between these scores”
+1. **Very large pairs (>50K shared variants):** Data is pre-sampled by the pipeline, note “Showing X of Y shared variants (sampled for performance)”
+1. **User enters invalid PGS IDs:** Show validation error “PGS ID not found in comparison data”
+
+### File Structure
+
+Add these files to the project:
+
+```
+pgs-catalog-explorer/
+├── app.py
+├── data_layer.py
+├── tabs/
+│   ├── scores.py
+│   ├── traits.py
+│   ├── publications.py
+│   ├── performance.py
+│   └── compare.py          # NEW
+├── data/
+│   ├── pgs_pairwise_stats.parquet      # From pipeline
+│   ├── pgs_pairwise_variants.json.gz   # From pipeline
+│   └── pipeline_metadata.json          # From pipeline
+```
+
+If the app doesn’t use a `tabs/` structure, add the Compare tab inline following the existing pattern.
+
+### Sample Data for Development
+
+Until the real pipeline runs, create stub data:
+
+```python
+# Generate sample comparison data for development
+sample_stats = pd.DataFrame([
+    {
+        "pgs_id_1": "PGS000001", "pgs_id_2": "PGS000045",
+        "trait_efo": "EFO_0001360", "trait_label": "Type 2 diabetes",
+        "n_variants_1": 150000, "n_variants_2": 1200000,
+        "n_shared": 125000, "pct_overlap_1": 83.3, "pct_overlap_2": 10.4,
+        "pearson_r": 0.87, "pearson_p": 1e-100, "pct_concordant_sign": 94.2,
+    },
+    {
+        "pgs_id_1": "PGS000002", "pgs_id_2": "PGS000003",
+        "trait_efo": "EFO_0000378", "trait_label": "Coronary artery disease",
+        "n_variants_1": 50000, "n_variants_2": 45000,
+        "n_shared": 12000, "pct_overlap_1": 24.0, "pct_overlap_2": 26.7,
+        "pearson_r": 0.45, "pearson_p": 1e-50, "pct_concordant_sign": 78.5,
+    },
+    # Add more sample rows...
+])
+
+sample_variants = {
+    "PGS000001_PGS000045": [
+        {"variant_id": "rs123", "weight_1": 0.05, "weight_2": 0.048},
+        {"variant_id": "rs456", "weight_1": -0.03, "weight_2": -0.025},
+        {"variant_id": "rs789", "weight_1": 0.02, "weight_2": -0.01},  # Discordant
+        # ... generate ~1000 sample points with realistic distribution
+    ]
+}
+```
+
+### Testing
+
+After implementation, verify:
+
+1. Table filters correctly by trait
+1. Table sorts by each numeric column (ascending and descending)
+1. Clicking a row loads the scatterplot
+1. Manual PGS ID entry works and validates input
+1. Scatterplot renders with correct colors and hover info
+1. Interpretation text changes appropriately based on stats
+1. CSV export includes filtered/sorted data
+1. Graceful handling when data files don’t exist
+
+-----
+
+Let me know when this is ready and I’ll provide the actual pre-computed data files from the pipeline.​​​​​​​​​​​​​​​​
