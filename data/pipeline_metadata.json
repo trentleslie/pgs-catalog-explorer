@@ -1,9 +1,27 @@
 {
-  "generated_date": "2026-02-20",
+  "generated_at": "2026-02-22T05:42:37.538673",
   "genome_build": "GRCh38",
-  "pipeline_version": "0.1.0",
-  "n_scores_compared": 12,
-  "n_traits": 3,
-  "n_pairs": 19,
-  "sampling_note": "Variant data sampled to max 5,000 per pair for performance"
+  "total_scores_analyzed": 5042,
+  "total_traits": 432,
+  "total_pairs": 157775,
+  "config": {
+    "genome_build": "GRCh38",
+    "quality_tiers": "None",
+    "min_pgs_per_trait": "2",
+    "max_variants_for_plot": "10000",
+    "download_threads": "16",
+    "parsing_workers": "32",
+    "comparison_workers": "4",
+    "request_timeout": "60",
+    "max_retries": "3",
+    "retry_delay": "2",
+    "max_traits": "None"
+  },
+  "runtime_stats": {
+    "cpu_cores_used": 4,
+    "download_threads": 16,
+    "batch_size": 50,
+    "num_batches": 9,
+    "memory_ceiling_gb": 70
+  }
 }

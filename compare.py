@@ -18,19 +18,53 @@ def load_comparison_data():
     stats_df = pd.read_parquet(stats_path)
 
     metadata_path = Path("data/pipeline_metadata.json")
-    metadata = json.load(open(metadata_path)) if metadata_path.exists() else {}
+    if metadata_path.exists():
+        with open(metadata_path) as f:
+            metadata = json.load(f)
+    else:
+        metadata = {}
 
     return stats_df, metadata
 
 
-def load_variant_data(pgs_id_1: str, pgs_id_2: str) -> list[dict]:
-    variants_path = Path("data/pgs_pairwise_variants.json.gz")
+@st.cache_data
+def _load_all_variants() -> dict | None:
+    """Load and cache the entire variants file.
 
-    if not variants_path.exists():
-        return []
+    Tries multiple file paths in order:
+    1. Full variants file (local development with complete dataset)
+    2. Sample variants file in data/ (production deployment)
+    3. Sample variants file in project root (alternate working directory)
 
-    with gzip.open(variants_path, "rt") as f:
-        all_variants = json.load(f)
+    Returns:
+        dict: All variant data keyed by PGS pair
+        None: If no variants file exists
+    """
+    paths_to_try = [
+        Path("data/pgs_pairwise_variants.json.gz"),  # Full file (local dev)
+        Path("data/pgs_pairwise_variants_sample.json.gz"),  # Sample file (production)
+        Path("pgs_pairwise_variants_sample.json.gz"),  # Alternate working directory
+    ]
+
+    for path in paths_to_try:
+        if path.exists():
+            with gzip.open(path, "rt") as f:
+                return json.load(f)
+
+    return None
+
+
+def load_variant_data(pgs_id_1: str, pgs_id_2: str) -> list[dict] | None:
+    """Extract variant data for a specific PGS pair.
+
+    Returns:
+        list[dict]: Variant data if found
+        None: If no variants file exists
+        []: If file exists but pair not found
+    """
+    all_variants = _load_all_variants()
+    if all_variants is None:
+        return None
 
     pair_key = f"{pgs_id_1}_{pgs_id_2}"
     if pair_key not in all_variants:
@@ -237,8 +271,11 @@ def build_network(
 
     effective_metric = metric
     if metric == "jaccard_index" and "jaccard_index" not in trait_df.columns:
-        trait_df["jaccard_index"] = trait_df["n_shared"] / (
-            trait_df["n_variants_1"] + trait_df["n_variants_2"] - trait_df["n_shared"]
+        denominator = trait_df["n_variants_1"] + trait_df["n_variants_2"] - trait_df["n_shared"]
+        trait_df["jaccard_index"] = np.where(
+            denominator > 0,
+            trait_df["n_shared"] / denominator,
+            0.0
         )
 
     for _, row in trait_df.iterrows():
