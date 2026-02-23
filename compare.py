@@ -271,8 +271,11 @@ def build_network(
 
     effective_metric = metric
     if metric == "jaccard_index" and "jaccard_index" not in trait_df.columns:
-        trait_df["jaccard_index"] = trait_df["n_shared"] / (
-            trait_df["n_variants_1"] + trait_df["n_variants_2"] - trait_df["n_shared"]
+        denominator = trait_df["n_variants_1"] + trait_df["n_variants_2"] - trait_df["n_shared"]
+        trait_df["jaccard_index"] = np.where(
+            denominator > 0,
+            trait_df["n_shared"] / denominator,
+            0.0
         )
 
     for _, row in trait_df.iterrows():
