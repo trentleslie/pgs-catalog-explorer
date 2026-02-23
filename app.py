@@ -1302,7 +1302,7 @@ def render_compare_tab():
         st.markdown("""
         **Required files:**
         - `data/pgs_pairwise_stats.parquet` — Summary statistics for all PGS pairs
-        - `data/pgs_pairwise_variants.json.gz` — Shared variant data for plotting
+        - `data/pgs_pairwise_variants_sample.json.gz` — Sample variant data for plotting (or full variants file)
         - `data/pipeline_metadata.json` — Pipeline metadata
         """)
         return
@@ -1458,9 +1458,18 @@ def render_compare_tab():
                 with st.spinner("Loading variant data..."):
                     variant_data = load_variant_data(actual_pgs1, actual_pgs2)
 
-                if not variant_data:
-                    st.warning("Variant-level data not available for this pair.")
+                if variant_data is None:
+                    # File not available (production mode)
+                    st.info(
+                        "**Scatterplot data not available in production.**\n\n"
+                        "The variant-level data file (4.6GB) is not deployed to the web server. "
+                        "To view scatterplots, run the Jupyter notebook locally with the full dataset."
+                    )
+                elif not variant_data:
+                    # File exists but pair not found
+                    st.warning(f"No shared variants found between {actual_pgs1} and {actual_pgs2}")
                 else:
+                    # Normal flow - render scatterplot
                     fig = create_scatterplot(variant_data, actual_pgs1, actual_pgs2, pair_stats)
                     if fig:
                         st.plotly_chart(fig, use_container_width=True)

@@ -23,11 +23,34 @@ def load_comparison_data():
     return stats_df, metadata
 
 
-def load_variant_data(pgs_id_1: str, pgs_id_2: str) -> list[dict]:
-    variants_path = Path("data/pgs_pairwise_variants.json.gz")
+def load_variant_data(pgs_id_1: str, pgs_id_2: str) -> list[dict] | None:
+    """Load variant data for a PGS pair.
 
-    if not variants_path.exists():
-        return []
+    Tries multiple file paths in order:
+    1. Full variants file (local development with complete dataset)
+    2. Sample variants file in data/ (production deployment)
+    3. Sample variants file in project root (alternate working directory)
+
+    Returns:
+        list[dict]: Variant data if found
+        None: If no variants file exists (production mode without sample)
+        []: If file exists but pair not found
+    """
+    # Try paths in order of preference
+    paths_to_try = [
+        Path("data/pgs_pairwise_variants.json.gz"),  # Full file (local dev)
+        Path("data/pgs_pairwise_variants_sample.json.gz"),  # Sample file (production)
+        Path("pgs_pairwise_variants_sample.json.gz"),  # Alternate working directory
+    ]
+
+    variants_path = None
+    for path in paths_to_try:
+        if path.exists():
+            variants_path = path
+            break
+
+    if variants_path is None:
+        return None  # No variants file available
 
     with gzip.open(variants_path, "rt") as f:
         all_variants = json.load(f)
