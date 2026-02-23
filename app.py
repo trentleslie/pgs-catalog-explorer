@@ -1311,14 +1311,14 @@ def render_compare_tab():
 
     if metadata:
         meta_parts = []
-        if metadata.get("generated_date"):
-            meta_parts.append(f"Data generated: {metadata['generated_date']}")
+        if metadata.get("generated_at"):
+            meta_parts.append(f"Data generated: {metadata['generated_at']}")
         if metadata.get("genome_build"):
             meta_parts.append(f"Genome build: {metadata['genome_build']}")
-        if metadata.get("n_pairs"):
-            meta_parts.append(f"{metadata['n_pairs']} pairs")
-        if metadata.get("n_traits"):
-            meta_parts.append(f"{metadata['n_traits']} traits")
+        if metadata.get("total_pairs"):
+            meta_parts.append(f"{metadata['total_pairs']:,} pairs")
+        if metadata.get("total_traits"):
+            meta_parts.append(f"{metadata['total_traits']:,} traits")
         if meta_parts:
             st.caption(" | ".join(meta_parts))
 

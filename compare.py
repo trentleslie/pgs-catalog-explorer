@@ -18,7 +18,11 @@ def load_comparison_data():
     stats_df = pd.read_parquet(stats_path)
 
     metadata_path = Path("data/pipeline_metadata.json")
-    metadata = json.load(open(metadata_path)) if metadata_path.exists() else {}
+    if metadata_path.exists():
+        with open(metadata_path) as f:
+            metadata = json.load(f)
+    else:
+        metadata = {}
 
     return stats_df, metadata
 
