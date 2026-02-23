@@ -27,8 +27,9 @@ def load_comparison_data():
     return stats_df, metadata
 
 
-def load_variant_data(pgs_id_1: str, pgs_id_2: str) -> list[dict] | None:
-    """Load variant data for a PGS pair.
+@st.cache_data
+def _load_all_variants() -> dict | None:
+    """Load and cache the entire variants file.
 
     Tries multiple file paths in order:
     1. Full variants file (local development with complete dataset)
@@ -36,28 +37,34 @@ def load_variant_data(pgs_id_1: str, pgs_id_2: str) -> list[dict] | None:
     3. Sample variants file in project root (alternate working directory)
 
     Returns:
-        list[dict]: Variant data if found
-        None: If no variants file exists (production mode without sample)
-        []: If file exists but pair not found
+        dict: All variant data keyed by PGS pair
+        None: If no variants file exists
     """
-    # Try paths in order of preference
     paths_to_try = [
         Path("data/pgs_pairwise_variants.json.gz"),  # Full file (local dev)
         Path("data/pgs_pairwise_variants_sample.json.gz"),  # Sample file (production)
         Path("pgs_pairwise_variants_sample.json.gz"),  # Alternate working directory
     ]
 
-    variants_path = None
     for path in paths_to_try:
         if path.exists():
-            variants_path = path
-            break
+            with gzip.open(path, "rt") as f:
+                return json.load(f)
 
-    if variants_path is None:
-        return None  # No variants file available
+    return None
 
-    with gzip.open(variants_path, "rt") as f:
-        all_variants = json.load(f)
+
+def load_variant_data(pgs_id_1: str, pgs_id_2: str) -> list[dict] | None:
+    """Extract variant data for a specific PGS pair.
+
+    Returns:
+        list[dict]: Variant data if found
+        None: If no variants file exists
+        []: If file exists but pair not found
+    """
+    all_variants = _load_all_variants()
+    if all_variants is None:
+        return None
 
     pair_key = f"{pgs_id_1}_{pgs_id_2}"
     if pair_key not in all_variants:
