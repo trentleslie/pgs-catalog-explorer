@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from data_layer import get_data_source
@@ -1358,6 +1359,32 @@ def render_compare_tab():
         min_correlation=min_corr,
     )
 
+    # Per-trait summary statistics (show when a specific trait is selected)
+    if selected_trait != "All traits":
+        trait_pairs = stats_df[stats_df["trait_label"] == selected_trait]
+        if not trait_pairs.empty:
+            total_pairs = len(trait_pairs)
+            high_corr_pairs = len(trait_pairs[trait_pairs["pearson_r"] > 0.7])
+            redundant_pairs = len(trait_pairs[trait_pairs["pearson_r"] > 0.95])
+            avg_corr = trait_pairs["pearson_r"].mean()
+            min_corr_val = trait_pairs["pearson_r"].min()
+            median_corr = trait_pairs["pearson_r"].median()
+            max_corr_val = trait_pairs["pearson_r"].max()
+
+            st.markdown(f"### Summary for {selected_trait}")
+            stat_cols = st.columns(5)
+            with stat_cols[0]:
+                st.metric("Total PGS Pairs", f"{total_pairs:,}")
+            with stat_cols[1]:
+                st.metric("Highly Correlated (r > 0.7)", f"{high_corr_pairs:,}")
+            with stat_cols[2]:
+                st.metric("Redundant (r > 0.95)", f"{redundant_pairs:,}")
+            with stat_cols[3]:
+                st.metric("Average Correlation", f"{avg_corr:.3f}")
+            with stat_cols[4]:
+                st.metric("Correlation Range", f"{min_corr_val:.2f} / {median_corr:.2f} / {max_corr_val:.2f}",
+                         help="Min / Median / Max")
+
     st.subheader("Pairwise Comparison Statistics")
 
     if filtered_stats.empty:
@@ -1381,11 +1408,21 @@ def render_compare_tab():
         display_df["concordance_display"] = display_df["pct_concordant_sign"].apply(
             lambda x: f"{x:.1f}%"
         )
+        # Compute Jaccard index: shared / union (avoiding division by zero)
+        union_size = display_df["n_variants_1"] + display_df["n_variants_2"] - display_df["n_shared"]
+        display_df["jaccard_index"] = np.where(
+            union_size > 0,
+            display_df["n_shared"] / union_size,
+            np.nan
+        )
+        display_df["jaccard_display"] = display_df["jaccard_index"].apply(
+            lambda x: f"{x:.3f}" if pd.notna(x) else "N/A"
+        )
 
         table_cols = [
             "pgs_id_1", "pgs_link_1", "pgs_id_2", "pgs_link_2",
             "trait_label", "n_variants_1", "n_variants_2", "n_shared",
-            "pct_overlap_display", "correlation_display", "concordance_display",
+            "pct_overlap_display", "correlation_display", "concordance_display", "jaccard_display",
         ]
         available_cols = [c for c in table_cols if c in display_df.columns]
 
@@ -1401,6 +1438,7 @@ def render_compare_tab():
             "pct_overlap_display": st.column_config.TextColumn("Overlap %"),
             "correlation_display": st.column_config.TextColumn("Correlation"),
             "concordance_display": st.column_config.TextColumn("Concordance"),
+            "jaccard_display": st.column_config.TextColumn("Jaccard", help="Jaccard index: shared / (N1 + N2 - shared)"),
         }
 
         st.dataframe(
@@ -1572,25 +1610,34 @@ def render_compare_tab():
             if net_stats["isolated_nodes"] > 0:
                 st.caption(f"{net_stats['isolated_nodes']} PRS have no connections above the threshold")
 
-    with st.expander("How to interpret the network"):
+    with st.expander("Understanding the Network Visualization"):
         st.markdown("""
-        **What the network shows:**
-        - Each **node** is a PRS for the selected trait
-        - **Edges** connect PRS pairs with the selected metric above the threshold
-        - **Node size** reflects number of variants in the PRS
-        - **Node color** reflects how many connections (darker = more connected)
-        - **Edge color** reflects correlation strength (green = high, yellow = moderate, red = low)
+        ### Visual Encoding Guide
 
-        **Patterns to look for:**
+        | Visual Element | Meaning |
+        |----------------|---------|
+        | **Node Size** | Number of variants in PGS (larger = more variants) |
+        | **Node Color** | Number of connections/degree (darker blue = more connected) |
+        | **Edge Color** | Pearson correlation: **Green** (r > 0.7), **Orange** (0.3 < r ≤ 0.7), **Red** (r ≤ 0.3) |
+        | **Edge Width** | Selected metric value (thicker = stronger relationship) |
+
+        ### Metric-Specific Guidance
+
+        - **Pearson Correlation (r):** Ranges from -1 to 1. Values > 0.7 indicate strong agreement in effect weights.
+        - **Sign Concordance (%):** Percentage of shared variants with matching effect direction. Values > 80% suggest similar biological signal.
+        - **Jaccard Index:** Ranges from 0 to 1. Measures variant set overlap. Values > 0.5 indicate substantial overlap.
+
+        ### Patterns to Look For
 
         | Pattern | Interpretation |
         |---------|----------------|
         | Tight cluster with thick green edges | Highly correlated scores — likely redundant, pick best-validated one |
         | Multiple separate clusters | Different "families" of PRS using different approaches or GWAS sources |
         | Isolated nodes | PRS that don't share much signal with others — may capture unique variance |
-        | Red/yellow edges | Moderate correlation — scores may complement each other |
+        | Red/orange edges | Moderate correlation — scores may complement each other |
 
-        **Recommended workflow:**
+        ### Recommended Workflow
+
         1. Start with threshold ~0.5 to see overall structure
         2. Raise threshold to 0.8+ to identify near-redundant pairs
         3. Lower threshold to 0.3 to see weaker connections
