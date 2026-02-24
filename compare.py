@@ -50,21 +50,18 @@ def load_variant_data(pgs_id_1: str, pgs_id_2: str) -> list[dict] | None:
     db_path = _get_variants_db_path()
     if db_path:
         pair_key = f"{pgs_id_1}_{pgs_id_2}"
-        conn = sqlite3.connect(db_path)
-        cursor = conn.execute(
-            "SELECT data FROM variants WHERE pair_key = ?",
-            (pair_key,)
-        )
-        row = cursor.fetchone()
-        if not row:
-            # Try reversed pair key
-            pair_key = f"{pgs_id_2}_{pgs_id_1}"
-            cursor = conn.execute(
+        with sqlite3.connect(db_path) as conn:
+            row = conn.execute(
                 "SELECT data FROM variants WHERE pair_key = ?",
                 (pair_key,)
-            )
-            row = cursor.fetchone()
-        conn.close()
+            ).fetchone()
+            if not row:
+                # Try reversed pair key
+                pair_key = f"{pgs_id_2}_{pgs_id_1}"
+                row = conn.execute(
+                    "SELECT data FROM variants WHERE pair_key = ?",
+                    (pair_key,)
+                ).fetchone()
 
         if row:
             return json.loads(row[0])
