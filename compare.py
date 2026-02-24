@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import json
 import gzip
+import sqlite3
 import networkx as nx
 import plotly.graph_objects as go
 import streamlit as st
@@ -27,50 +28,60 @@ def load_comparison_data():
     return stats_df, metadata
 
 
-@st.cache_data
-def _load_all_variants() -> dict | None:
-    """Load and cache the entire variants file.
-
-    Tries multiple file paths in order:
-    1. Full variants file (local development with complete dataset)
-    2. Sample variants file in data/ (production deployment)
-    3. Sample variants file in project root (alternate working directory)
-
-    Returns:
-        dict: All variant data keyed by PGS pair
-        None: If no variants file exists
-    """
-    paths_to_try = [
-        Path("data/pgs_pairwise_variants.json.gz"),  # Full file (local dev)
-        Path("data/pgs_pairwise_variants_sample.json.gz"),  # Sample file (production)
-        Path("pgs_pairwise_variants_sample.json.gz"),  # Alternate working directory
-    ]
-
-    for path in paths_to_try:
-        if path.exists():
-            with gzip.open(path, "rt") as f:
-                return json.load(f)
-
+def _get_variants_db_path() -> Path | None:
+    """Get path to variants SQLite database if it exists."""
+    db_path = Path("data/pgs_pairwise_variants.db")
+    if db_path.exists():
+        return db_path
     return None
 
 
 def load_variant_data(pgs_id_1: str, pgs_id_2: str) -> list[dict] | None:
-    """Extract variant data for a specific PGS pair.
+    """Load variant data for a specific PGS pair.
+
+    Tries SQLite database first (production), then falls back to sample JSON.
 
     Returns:
         list[dict]: Variant data if found
-        None: If no variants file exists
-        []: If file exists but pair not found
+        None: If no variants database/file exists
+        []: If exists but pair not found
     """
-    all_variants = _load_all_variants()
-    if all_variants is None:
-        return None
+    # Try SQLite database first (production with full data)
+    db_path = _get_variants_db_path()
+    if db_path:
+        pair_key = f"{pgs_id_1}_{pgs_id_2}"
+        with sqlite3.connect(db_path) as conn:
+            row = conn.execute(
+                "SELECT data FROM variants WHERE pair_key = ?",
+                (pair_key,)
+            ).fetchone()
+            if not row:
+                # Try reversed pair key
+                pair_key = f"{pgs_id_2}_{pgs_id_1}"
+                row = conn.execute(
+                    "SELECT data FROM variants WHERE pair_key = ?",
+                    (pair_key,)
+                ).fetchone()
 
-    pair_key = f"{pgs_id_1}_{pgs_id_2}"
-    if pair_key not in all_variants:
-        pair_key = f"{pgs_id_2}_{pgs_id_1}"
+        if row:
+            return json.loads(row[0])
+        return []
 
-    return all_variants.get(pair_key, [])
+    # Fall back to sample JSON file (limited pairs for development/demo)
+    sample_paths = [
+        Path("data/pgs_pairwise_variants_sample.json.gz"),
+        Path("pgs_pairwise_variants_sample.json.gz"),
+    ]
+    for path in sample_paths:
+        if path.exists():
+            with gzip.open(path, "rt") as f:
+                all_variants = json.load(f)
+            pair_key = f"{pgs_id_1}_{pgs_id_2}"
+            if pair_key not in all_variants:
+                pair_key = f"{pgs_id_2}_{pgs_id_1}"
+            return all_variants.get(pair_key, [])
+
+    return None  # No variant data available
 
 
 def filter_comparison_data(
