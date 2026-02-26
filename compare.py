@@ -1,3 +1,5 @@
+from contextlib import closing
+
 import pandas as pd
 import numpy as np
 import json
@@ -50,7 +52,7 @@ def load_variant_data(pgs_id_1: str, pgs_id_2: str) -> list[dict] | None:
     db_path = _get_variants_db_path()
     if db_path:
         pair_key = f"{pgs_id_1}_{pgs_id_2}"
-        with sqlite3.connect(db_path) as conn:
+        with closing(sqlite3.connect(db_path)) as conn:
             row = conn.execute(
                 "SELECT data FROM variants WHERE pair_key = ?",
                 (pair_key,)
@@ -63,9 +65,9 @@ def load_variant_data(pgs_id_1: str, pgs_id_2: str) -> list[dict] | None:
                     (pair_key,)
                 ).fetchone()
 
-        if row:
-            return json.loads(row[0])
-        return []
+            if row:
+                return json.loads(row[0])
+            return []
 
     # Fall back to sample JSON file (limited pairs for development/demo)
     sample_paths = [
@@ -88,17 +90,25 @@ def filter_comparison_data(
     stats_df: pd.DataFrame,
     trait: str = None,
     min_shared: int = 0,
+    max_shared: int = None,
     min_correlation: float = -1.0,
+    max_correlation: float = 1.0,
 ) -> pd.DataFrame:
     filtered = stats_df.copy()
 
-    if trait and trait != "All traits":
+    if trait:
         filtered = filtered[filtered["trait_label"] == trait]
 
     if min_shared > 0:
         filtered = filtered[filtered["n_shared"] >= min_shared]
 
-    filtered = filtered[filtered["pearson_r"] >= min_correlation]
+    if max_shared is not None:
+        filtered = filtered[filtered["n_shared"] <= max_shared]
+
+    filtered = filtered[
+        (filtered["pearson_r"] >= min_correlation) &
+        (filtered["pearson_r"] <= max_correlation)
+    ]
 
     return filtered
 
@@ -259,8 +269,16 @@ def build_network(
     stats_df: pd.DataFrame,
     trait: str,
     metric: str = "pearson_r",
-    threshold: float = 0.5,
+    threshold: float | tuple = 0.5,
 ) -> nx.Graph:
+    """Build a network graph of PGS relationships.
+
+    Args:
+        stats_df: DataFrame with pairwise comparison statistics
+        trait: Trait label to filter by
+        metric: Metric to use for edge filtering ("pearson_r", "pct_concordant_sign", "jaccard_index")
+        threshold: Either a single minimum threshold (float) or a (min, max) tuple for range filtering
+    """
     if "trait_label" in stats_df.columns:
         trait_df = stats_df[stats_df["trait_label"] == trait].copy()
     else:
@@ -289,9 +307,16 @@ def build_network(
             0.0
         )
 
+    # Handle both single threshold (backward compat) and range tuple
+    if isinstance(threshold, tuple):
+        min_threshold, max_threshold = threshold
+    else:
+        min_threshold = threshold
+        max_threshold = float("inf")
+
     for _, row in trait_df.iterrows():
         metric_value = row.get(effective_metric, None)
-        if pd.notna(metric_value) and metric_value >= threshold:
+        if pd.notna(metric_value) and min_threshold <= metric_value <= max_threshold:
             G.add_edge(
                 row["pgs_id_1"],
                 row["pgs_id_2"],
@@ -364,12 +389,51 @@ def plot_network(G: nx.Graph, title: str = "PRS Correlation Network") -> go.Figu
         ),
         text=[n for n in G.nodes()],
         textposition="top center",
-        textfont=dict(size=9),
+        textfont=dict(size=10, color="black", family="Arial Black"),  # Dark bold labels
         hovertext=node_text,
         hoverinfo="text",
     )
 
     fig = go.Figure(data=edge_traces + [node_trace])
+
+    # Add edge color legend (top-left)
+    fig.add_annotation(
+        text=(
+            "<b>Edge Colors (Correlation)</b><br>"
+            "<b><span style='color:#2ecc71'>■</span> High (r > 0.7)</b><br>"
+            "<b><span style='color:#f39c12'>■</span> Moderate (0.3 < r ≤ 0.7)</b><br>"
+            "<b><span style='color:#e74c3c'>■</span> Low (r ≤ 0.3)</b>"
+        ),
+        xref="paper", yref="paper",
+        x=0.01, y=0.99,
+        xanchor="left", yanchor="top",
+        showarrow=False,
+        font=dict(size=10, color="black", family="Arial Black"),
+        align="left",
+        bgcolor="rgba(255,255,255,0.9)",
+        bordercolor="#cccccc",
+        borderwidth=1,
+        borderpad=6,
+    )
+
+    # Add node encoding legend (bottom-left)
+    fig.add_annotation(
+        text=(
+            "<b>Node Encoding</b><br>"
+            "<b>Size = Variant count</b><br>"
+            "<b>Color = Connection count</b>"
+        ),
+        xref="paper", yref="paper",
+        x=0.01, y=0.01,
+        xanchor="left", yanchor="bottom",
+        showarrow=False,
+        font=dict(size=10, color="black", family="Arial Black"),
+        align="left",
+        bgcolor="rgba(255,255,255,0.9)",
+        bordercolor="#cccccc",
+        borderwidth=1,
+        borderpad=6,
+    )
 
     fig.update_layout(
         title=title,

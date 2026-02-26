@@ -1323,7 +1323,11 @@ def render_compare_tab():
         if meta_parts:
             st.caption(" | ".join(meta_parts))
 
-    trait_options = ["All traits"] + sorted(stats_df["trait_label"].unique().tolist())
+    trait_options = sorted(stats_df["trait_label"].unique().tolist())
+
+    # Default to "type 2 diabetes mellitus" if available, otherwise first trait
+    default_trait = "type 2 diabetes mellitus"
+    default_index = trait_options.index(default_trait) if default_trait in trait_options else 0
 
     st.subheader("Filters")
     fcol1, fcol2, fcol3 = st.columns(3)
@@ -1332,58 +1336,61 @@ def render_compare_tab():
         selected_trait = st.selectbox(
             "Trait",
             options=trait_options,
+            index=default_index,
             key="compare_trait_filter",
         )
     with fcol2:
-        max_shared = int(stats_df["n_shared"].max()) if not stats_df.empty else 10000
-        min_shared = st.slider(
-            "Min Shared Variants",
+        max_shared_val = int(stats_df["n_shared"].max()) if not stats_df.empty else 10000
+        shared_range = st.slider(
+            "Shared Variants Range",
             min_value=0,
-            max_value=max_shared,
-            value=0,
-            step=max(1, max_shared // 100),
+            max_value=max_shared_val,
+            value=(0, max_shared_val),
+            step=max(1, max_shared_val // 100),
+            help="Filter pairs by number of shared variants (min, max)",
         )
     with fcol3:
-        min_corr = st.slider(
-            "Min Correlation (r)",
+        corr_range = st.slider(
+            "Correlation Range (r)",
             min_value=-1.0,
             max_value=1.0,
-            value=-1.0,
+            value=(-1.0, 1.0),
             step=0.05,
+            help="Filter pairs by Pearson correlation (min, max)",
         )
 
     filtered_stats = filter_comparison_data(
         stats_df,
         trait=selected_trait,
-        min_shared=min_shared,
-        min_correlation=min_corr,
+        min_shared=shared_range[0],
+        max_shared=shared_range[1],
+        min_correlation=corr_range[0],
+        max_correlation=corr_range[1],
     )
 
-    # Per-trait summary statistics (show when a specific trait is selected)
-    if selected_trait != "All traits":
-        trait_pairs = stats_df[stats_df["trait_label"] == selected_trait]
-        if not trait_pairs.empty:
-            total_pairs = len(trait_pairs)
-            high_corr_pairs = len(trait_pairs[trait_pairs["pearson_r"] > 0.7])
-            redundant_pairs = len(trait_pairs[trait_pairs["pearson_r"] > 0.95])
-            avg_corr = trait_pairs["pearson_r"].mean()
-            min_corr_val = trait_pairs["pearson_r"].min()
-            median_corr = trait_pairs["pearson_r"].median()
-            max_corr_val = trait_pairs["pearson_r"].max()
+    # Per-trait summary statistics (reflects current filter state)
+    if not filtered_stats.empty:
+        total_pairs = len(filtered_stats)
+        high_corr_pairs = len(filtered_stats[filtered_stats["pearson_r"] > 0.7])
+        redundant_pairs = len(filtered_stats[filtered_stats["pearson_r"] > 0.95])
+        avg_corr = filtered_stats["pearson_r"].mean()
+        min_corr_val = filtered_stats["pearson_r"].min()
+        median_corr = filtered_stats["pearson_r"].median()
+        max_corr_val = filtered_stats["pearson_r"].max()
 
-            st.markdown(f"### Summary for {selected_trait}")
-            stat_cols = st.columns(5)
-            with stat_cols[0]:
-                st.metric("Total PGS Pairs", f"{total_pairs:,}")
-            with stat_cols[1]:
-                st.metric("Highly Correlated (r > 0.7)", f"{high_corr_pairs:,}")
-            with stat_cols[2]:
-                st.metric("Redundant (r > 0.95)", f"{redundant_pairs:,}")
-            with stat_cols[3]:
-                st.metric("Average Correlation", f"{avg_corr:.3f}")
-            with stat_cols[4]:
-                st.metric("Correlation Range", f"{min_corr_val:.2f} / {median_corr:.2f} / {max_corr_val:.2f}",
-                         help="Min / Median / Max")
+        st.markdown(f"### Summary for {selected_trait} (filtered)")
+        stat_cols = st.columns(5)
+        with stat_cols[0]:
+            st.metric("Total PGS Pairs", f"{total_pairs:,}")
+        with stat_cols[1]:
+            st.metric("Highly Correlated (r > 0.7)", f"{high_corr_pairs:,}")
+        with stat_cols[2]:
+            st.metric("Redundant (r > 0.95)", f"{redundant_pairs:,}")
+        with stat_cols[3]:
+            st.metric("Average Correlation", f"{avg_corr:.3f}")
+        with stat_cols[4]:
+            st.metric("Correlation Range", f"{min_corr_val:.2f} / {median_corr:.2f} / {max_corr_val:.2f}",
+                     help="Min / Median / Max")
 
     st.subheader("Pairwise Comparison Statistics")
 
@@ -1460,20 +1467,22 @@ def render_compare_tab():
     st.subheader("Comparison Visualization")
     st.markdown("Enter two PGS IDs to visualize their variant overlap and effect weight correlation.")
 
-    all_pgs_ids = sorted(set(stats_df["pgs_id_1"]) | set(stats_df["pgs_id_2"]))
+    # Filter PGS IDs to only those appearing in pairs for the selected trait
+    trait_filtered_stats = stats_df[stats_df["trait_label"] == selected_trait]
+    trait_pgs_ids = sorted(set(trait_filtered_stats["pgs_id_1"]) | set(trait_filtered_stats["pgs_id_2"]))
 
     vcol1, vcol2 = st.columns(2)
     with vcol1:
         pgs1_input = st.selectbox(
             "PGS 1",
-            options=[""] + all_pgs_ids,
-            key="compare_pgs1",
+            options=[""] + trait_pgs_ids,
+            key=f"compare_pgs1_{selected_trait}",  # Dynamic key resets on trait change
         )
     with vcol2:
         pgs2_input = st.selectbox(
             "PGS 2",
-            options=[""] + all_pgs_ids,
-            key="compare_pgs2",
+            options=[""] + trait_pgs_ids,
+            key=f"compare_pgs2_{selected_trait}",  # Dynamic key resets on trait change
         )
 
     if pgs1_input and pgs2_input and pgs1_input != pgs2_input:
@@ -1541,61 +1550,51 @@ def render_compare_tab():
     st.divider()
 
     st.subheader("PRS Correlation Network")
+    st.caption(f"Showing network for: **{selected_trait}**")
 
-    network_trait_options = sorted(stats_df["trait_label"].unique().tolist())
-    if not network_trait_options:
-        st.info("No trait data available for network view.")
-        return
+    # Use the main trait filter instead of a separate dropdown
+    metric = st.selectbox(
+        "Edge Metric",
+        options=["pearson_r", "pct_concordant_sign", "jaccard_index"],
+        format_func=lambda x: {
+            "pearson_r": "Pearson Correlation (r)",
+            "pct_concordant_sign": "Sign Concordance (%)",
+            "jaccard_index": "Jaccard Index",
+        }.get(x, x),
+        key="network_metric",
+    )
 
-    ncol1, ncol2 = st.columns(2)
-    with ncol1:
-        network_trait = st.selectbox(
-            "Trait",
-            options=network_trait_options,
-            key="network_trait",
-        )
-    with ncol2:
-        metric = st.selectbox(
-            "Edge Metric",
-            options=["pearson_r", "pct_concordant_sign", "jaccard_index"],
-            format_func=lambda x: {
-                "pearson_r": "Pearson Correlation (r)",
-                "pct_concordant_sign": "Sign Concordance (%)",
-                "jaccard_index": "Jaccard Index",
-            }.get(x, x),
-            key="network_metric",
-        )
-
-    default_threshold = 0.5
     if metric == "pct_concordant_sign":
-        default_threshold = 70.0
-        threshold = st.slider(
-            f"Edge Threshold (show edges where {metric} >= threshold)",
+        threshold_range = st.slider(
+            f"Edge Range (show edges where {metric} is within range)",
             min_value=0.0,
             max_value=100.0,
-            value=default_threshold,
+            value=(50.0, 100.0),
             step=1.0,
-            key="network_threshold",
+            key=f"network_threshold_{metric}",  # Dynamic key for metric changes
+            help="Filter network edges by sign concordance percentage (min, max)",
         )
     else:
-        threshold = st.slider(
-            f"Edge Threshold (show edges where {metric} >= threshold)",
-            min_value=0.0 if metric != "pearson_r" else -1.0,
+        min_val = -1.0 if metric == "pearson_r" else 0.0
+        threshold_range = st.slider(
+            f"Edge Range (show edges where {metric} is within range)",
+            min_value=min_val,
             max_value=1.0,
-            value=default_threshold,
+            value=(0.3, 1.0) if metric == "pearson_r" else (0.0, 1.0),
             step=0.05,
-            key="network_threshold",
+            key=f"network_threshold_{metric}",  # Dynamic key for metric changes
+            help="Filter network edges by metric value (min, max)",
         )
 
-    if network_trait:
-        G = build_network(stats_df, network_trait, metric, threshold)
+    if selected_trait:
+        G = build_network(stats_df, selected_trait, metric, threshold_range)
 
         if G.number_of_nodes() == 0:
             st.warning("No PRS found for this trait.")
         elif G.number_of_nodes() == 1:
             st.info("Only 1 PRS for this trait — no comparisons possible.")
         else:
-            fig = plot_network(G, f"PRS Network: {network_trait}")
+            fig = plot_network(G, f"PRS Network: {selected_trait}")
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
 
