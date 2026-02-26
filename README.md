@@ -28,6 +28,33 @@ A Streamlit web application for exploring the [Polygenic Score (PGS) Catalog](ht
 - Displays evaluation ancestry, sample size, cohorts, and metrics (AUC, OR, etc.)
 - Proper context for interpreting metrics across populations
 
+### Compare Tab (Pairwise PGS Analysis)
+
+Compare polygenic scores for the same trait to assess redundancy and effect direction concordance.
+
+**Features:**
+- Select any trait with multiple PGS to see all pairwise comparisons
+- View effect weight correlations (Pearson r) and variant overlap statistics
+- Interactive scatterplots showing shared variant weights
+- Quality flags for highly correlated (r > 0.95) or negatively correlated pairs
+
+**Pipeline:** The comparison data is pre-computed using a memory-safe batch processing pipeline. See the [pipeline notebook](data/pgs_pairwise_comparison_pipeline_optimized.ipynb) for methodology.
+
+**Statistics (February 2026):**
+| Metric | Value |
+|--------|-------|
+| Total PGS analyzed | 5,042 |
+| Traits with ≥2 PGS | 432 |
+| Pairwise comparisons | 157,775 |
+| Highly correlated pairs (r > 0.95) | 4,971 |
+| Negatively correlated (r < -0.1) | 35,445 |
+| Zero variant overlap | 28,301 |
+
+**Key Findings:**
+- Median Pearson r = 0.155 (high variability between PGS for same trait)
+- ~5K pairs are essentially redundant (r > 0.95)
+- ~35K pairs have opposite effect directions, suggesting effect allele coding differences
+
 ## Architecture
 
 The application uses an abstracted data layer that enables easy backend swapping:

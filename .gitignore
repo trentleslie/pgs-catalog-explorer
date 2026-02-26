@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project-specific: Large data files (use SQLite DB on server)
+data/pgs_pairwise_variants.db
+data/pgs_pairwise_variants.json.gz
+
+# Project-specific: Development/generated files
+data/pgs_comparison_data/
+pgs_comparison_data/
+data/pgs_pairwise_comparison_pipeline_optimized.py
+
+# Screenshots (root level only - attached_assets/*.png already tracked)
+/Screenshot*.png
